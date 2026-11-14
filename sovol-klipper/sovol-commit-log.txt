@@ -1,0 +1,49 @@
+cc8afd89 2025-01-20 zcsw | 1.3.7版本
+e88b61ca 2025-01-17 zcsw | 涡流校准添加Z轴抬升
+9366ec44 2025-01-15 zcsw | 细化提示码101和103
+e6462b6f 2025-01-13 zcsw | 1
+a95bbe3f 2025-01-13 zcsw | 添加校准跳过按钮
+3afc384e 2025-01-13 zcsw | 放宽缓冲处理时间
+1c0a784e 2025-01-11 zcsw | 添加错误69,70
+112b0473 2025-01-07 zcsw | 错误码1细分
+0ffea310 2024-12-31 zcsw | 添加开机校准功能
+651f2bb1 2024-12-26 zcsw | 修复Obico连接问题
+fe6036f7 2024-12-20 zcsw | 断电续打界面修复
+ff3dd6c5 2024-12-20 root | add error code from 60
+5e947f82 2024-12-19 zcsw | 新增提示码124，版本变更1.2.8
+02792f8b 2024-12-19 zcsw | 风扇提示信息，同步到网页上提示
+c05d7af3 2024-12-19 zcsw | 屏幕上的时间显示改成实际打印开始后的计时时间
+3a6d0f92 2024-12-17 zcsw | 新增涡流传感器提示码
+99c9e840 2024-12-17 zcsw | 版本号变更1.2.7
+60f5f3b0 2024-12-16 zcsw | 优化屏幕显示和菜单
+92beb4c9 2024-12-16 zcsw | 添加提示码
+fe4df8bb 2024-12-16 focczi | >i2c.c: 删减代码重复，优化冗余 >ldc1612: 增加i2c错误码分类处理
+d436c9fe 2024-12-16 focczi | i2c.c:修复编译时报警告问题  homming.py:修复self.gcode._process_commands(['M117 Tip code: 102'])执行报错
+0d963511 2024-12-14 root | fix c_helper.so
+14d7b183 2024-12-14 zcsw | 修复OTA界面返回功能
+54f10c5a 2024-12-13 zcsw | 1、修改菜单列表 2、添加提示码
+265b3f75 2024-12-12 focczi | 增加i2c_busy_errata中的延时
+de564adb 2024-12-12 focczi | 恢复上次revert的修改
+43723ef4 2024-12-12 focczi | Revert "z_offset_calibration.py:考虑internal_endstop_offset=0的情况下，你能确保calibration的accept能正常通过\n i2c.c:删除注释"
+ea9486db 2024-12-12 focczi | Revert "z_offset_calibration.py:考虑internal_endstop_offset=0的情况下，你能确保calibration的accept能正常通过\n i2c.c:删除注释"
+42757b9a 2024-12-12 focczi | z_offset_calibration.py:考虑internal_endstop_offset=0的情况下，你能确保calibration的accept能正常通过\n i2c.c:删除注释
+ee6f394f 2024-12-11 focczi | 1.优化i2c_busy_errata，使得i2c_busy_errata能恢复stm32f1硬件i2c 2.修改i2c的i2c_wait的处理机制 3.新增修改其余函数错误退出机制
+738006c9 2024-12-11 focczi | 1.禁止对stm32f1的i2c_shutdown_on_err操作（有待优化）
+79c9992c 2024-12-11 focczi | 1.新增i2c_bus错误码
+060eada7 2024-12-11 focczi | 1.禁止对stm32f1的i2c_shutdown_on_err操作（有待优化）
+dbfbb065 2024-12-11 focczi | 1.删除冗余代码 2.优化eddy calibration探测高度与频率关系时的采样动作，减少向上抬升0.5mm再向下移动到目标探测位置的动作，缩短探测时间
+93b121b0 2024-12-11 focczi | 1.优化_start_measurements读取设备id流程，增加循环试探逻辑，当i2c受干扰读取到错误数据时重新恢复i2c并重新读取，确保数据正常 2.增加对i2c错误上报寄存器信息时的handler，并打印进log中
+bf122d4b 2024-11-30 focczi | 删除冗余代码，修改internal_endstop_offset补偿逻辑
+6a5dd47d 2024-11-22 root | 1.2.0
+e2bd3d38 2024-11-21 zcsw | 添加腔室温度显示
+a9eae03a 2024-11-21 zcsw | Merge branch 'main' of http://192.168.1.233/root/klipper
+26d26645 2024-11-21 zcsw | 修改界面,风扇报警逻辑，开机界面延时
+f895b5ee 2024-11-21 focczi | 1.修改z_offset_clibration逻辑，增加至多5次循环循环的压力前后校验；2.优化z轴最大值的获取方式
+d52b4a86 2024-11-16 root | fix id
+4eba63f1 2024-11-12 root | fix canbus_uuid
+9312a275 2024-11-11 zcsw | 修复涡流逻辑
+b775d99e 2024-11-08 zcsw | 1
+d8d51937 2024-11-08 zcsw | 1
+1b161896 2024-11-08 zcsw | 修改涡流动作
+ad90d601 2024-11-07 zcsw | 添加涡流功能
+a6dc07c8 2024-11-08 root | first commit for sv08mini

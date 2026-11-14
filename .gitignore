@@ -1,0 +1,8 @@
+# local working copies (reproducible from upstream + sovol-klipper/*.patch)
+upstream-klipper/
+from-printer/klipper/
+.patchcheck/
+# too big for git: published as a GitHub release asset instead (see sovol-official/SOURCES.md)
+*.img
+*.img.zst
+sovol-official/H616_*.zip
