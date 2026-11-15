@@ -11,6 +11,8 @@ that can `ssh sovol@<printer>` (set `PRINTER=user@host` if it isn't `sovol@192.1
 | Printer is printing or paused | Refuses to start |
 | Board image with a wrong start address | Refuses to flash it (`flash-board.sh` checks the reset vector) |
 | New host code stops Klipper starting | Restores the previous `klippy/`, restarts Klipper, exits with an error |
+| An upstream app (Moonraker, Mainsail, ...) can't be fetched, or its pin changes its dependencies | Refuses before changing anything |
+| An updated app's service doesn't come back | Puts every app back on its previous commit/files (and pops stashed local edits), restores `klippy/` |
 | A board flash fails or is interrupted | Retries once. The board waits in Katapult, so the retry finds it there |
 | A board doesn't come back on the expected version | Flashes that board's previous image back (the last image install.sh flashed, or stock), then restores the previous `klippy/` |
 

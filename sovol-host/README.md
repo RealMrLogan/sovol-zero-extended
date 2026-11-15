@@ -9,7 +9,10 @@ Sovol's own scripts, services and system files outside Klipper, extracted from t
 - `boot/scripts/`: first-boot and system scripts (Wi-Fi setup server, brightness, RGB, sounds, OTA service)
 - `etc/`: systemd units, `can0` interface, udev rules, rc.local, nginx site
 - `upstream-versions.txt`: Moonraker, KlipperScreen, Mainsail etc. are unmodified upstream at these commits
-- `upstream-diffs/`: the only two edits Sovol made to those upstream apps
+- `upstream-diffs/`: the only two edits Sovol made to those upstream apps. Releases drop both: the crowsnest
+  start delay is now a systemd drop-in (`release/systemd/`), and the timelapse one only affected its installer.
+  Sovol's Mainsail is the official v2.13.2 build with CRLF line endings; releases ship the official zip.
+  Current pins: `release/apps.conf`.
 
 The stock `printer_data/config` is in `../stock-config/config/`.
 A printer updated by OTA differs slightly from the image (newer usbmount logging, Wi-Fi server run as a

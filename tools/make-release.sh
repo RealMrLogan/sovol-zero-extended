@@ -46,6 +46,27 @@ for b in toolhead mainboard; do cp "$ROOT/stock-firmware/stock-$b.bin" "$stage/f
 
 cp -r "$tree/klippy" "$stage/klipper/"
 find "$stage/klipper" \( -name '*.pyc' -o -name __pycache__ -o -name '*.so' \) -prune -exec rm -rf {} +
+
+# upstream apps (release/apps.conf). A git app only needs a bundle once its pin moves past Sovol's stock
+# commit, which every Zero already has; the bundle carries just stock..pin, so installs work offline.
+mkdir -p "$stage/apps"
+while read -r app type url stock pin _; do
+    case $type in
+        git) [ "$pin" = "$stock" ] && continue
+             echo "== $app: bundling ${stock:0:7}..${pin:0:7}"
+             git clone -q --bare "$url" "$work/$app.git"
+             git -C "$work/$app.git" branch -f zero-pin "$pin"
+             git -C "$work/$app.git" bundle create -q "$stage/apps/$app.bundle" zero-pin "^$stock" ;;
+        zip) echo "== $app: $url"
+             curl -fsSL "$url" -o "$work/$app.zip"
+             echo "$pin  $work/$app.zip" | sha256sum --quiet -c
+             python3 -m zipfile -e "$work/$app.zip" "$stage/apps/$app/" ;;
+        *) echo "apps.conf: bad type '$type' for $app"; exit 1 ;;
+    esac
+done < <(grep -v '^\s*#' "$ROOT/release/apps.conf" | grep .)
+cp "$ROOT/release/apps.conf" "$stage/"
+cp -r "$ROOT/release/systemd" "$stage/"
+
 cp "$ROOT/release/install.sh" "$ROOT/release/flash-board.sh" "$stage/"
 chmod +x "$stage"/*.sh
 
@@ -66,6 +87,8 @@ json.dump({
             ("mainboard", "${ver[mainboard]}", "${start[mainboard]}", "${uuid[mainboard]}", "$(stock_version mainboard)"),
         ]
     },
+    "apps": {l.split()[0]: {"type": l.split()[1], "source": l.split()[2], "pin": l.split()[4]}
+             for l in open("$ROOT/release/apps.conf") if l.strip() and not l.lstrip().startswith("#")},
 }, open(sys.argv[1], "w"), indent=2)
 EOF
 (cd "$stage" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)

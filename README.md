@@ -2,6 +2,7 @@
 
 Community firmware for the Sovol Zero, now that Sovol's own (1.4.7) is frozen.
 This repo is the source of truth: **upstream Klipper, pinned and unmodified, plus Sovol's changes as a patch series.**
+The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the same way, unmodified, in `release/apps.conf`.
 
 - `klipper/`: submodule, upstream [Klipper3d/klipper](https://github.com/Klipper3d/klipper) pinned at `faa89be8` (what Sovol based 1.4.7 on)
 - `patches/`: Sovol's changes, split by feature, applied in order on top of the pin. `sovol-commit-log.txt` keeps Sovol's original commit messages.
@@ -13,7 +14,7 @@ This repo is the source of truth: **upstream Klipper, pinned and unmodified, plu
 - `from-printer/config/`: this printer's config before the 2026-11-14 reset (user mods, to re-add later)
 - `sovol-host/`: Sovol's scripts, services and system files outside Klipper (stock)
 - `stock-firmware/`: stock board images (mainboard read back from the board) and their version strings
-- `release/`: what goes in a release zip (`install.sh`, `flash-board.sh`) and `boards.conf`
+- `release/`: what goes in a release zip (`install.sh`, `flash-board.sh`), `boards.conf` and `apps.conf`
 - `sovol-official/`: Sovol's published update package, manuals and recovery-image checksums
 
 ## Workflow
@@ -38,7 +39,7 @@ Set `PRINTER=user@host` if the printer isn't at `sovol@192.168.1.130`.
 
 ## Releases
 Versions are `vMAJOR.MINOR.PATCH` (`-rc.N` for test builds). Each release is one zip with the host code,
-both board images, a manifest and `install.sh`.
+both board images, the upstream apps, a manifest and `install.sh`.
 
 1. Add a `## vX.Y.Z` section to `CHANGELOG.md`, commit, then `git tag vX.Y.Z && git push origin main vX.Y.Z`.
 2. GitHub Actions builds the zip in Debian 11 (Sovol's exact compiler) and opens a **draft** release.
@@ -49,6 +50,11 @@ both board images, a manifest and `install.sh`.
 `klippy/`, restarts Klipper (rolling back if it doesn't come up), and flashes only boards whose running
 firmware version differs from the release (`--force-flash <board>` / `--no-flash` override). A board that
 doesn't come back on the expected version is flashed back to its previous image; see `RECOVERY.md`.
+Upstream apps (`release/apps.conf`) are put on their pins the same way: git apps are checked out at the
+pinned commit (local edits are stashed, not lost), Mainsail is replaced by the pinned official release zip
+(keeping `config.json`), and any failure restores them with `klippy/`. To upgrade an app, change its pin;
+the zip then carries a git bundle from Sovol's stock commit to the pin, so installs don't need the network.
+A pin that changes an app's Python/system dependencies is refused for now.
 `release/boards.conf` picks per board whether a release ships the stock image or one built from `patches/`.
 Build locally on the printer: `TREE=<patched tree> tools/make-release.sh vX.Y.Z`.
 
