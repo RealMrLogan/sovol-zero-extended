@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Install toolchain
         run: |
+          # Debian 11 is end-of-life; archive.debian.org keeps it (and this exact compiler) permanently
+          printf '%s\n' 'deb http://archive.debian.org/debian bullseye main' \
+                        'deb http://archive.debian.org/debian-security bullseye-security main' > /etc/apt/sources.list
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git make python3 gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi curl
           arm-none-eabi-gcc --version | head -1
