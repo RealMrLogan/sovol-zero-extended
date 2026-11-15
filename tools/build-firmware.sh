@@ -24,7 +24,7 @@ EOF
 cp "$cfg" "$tmp/.config"
 make -C "$tree" -s KCONFIG_CONFIG="$tmp/.config" OUT="$tmp/out/" olddefconfig >/dev/null
 make -C "$tree" -j"$(nproc)" KCONFIG_CONFIG="$tmp/.config" OUT="$tmp/out/" > "$tmp/build.log" 2>&1 ||
-    { tail -30 "$tmp/build.log"; exit 1; }
+    { tail -40 "$tmp/build.log" >&2; exit 1; }
 cp "$tmp/out/klipper.bin" "$out/$board.bin"
 cp "$tmp/out/klipper.dict" "$out/$board.dict"
 python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$out/$board.dict"
