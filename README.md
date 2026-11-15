@@ -8,7 +8,10 @@ This repo is the source of truth: **upstream Klipper, pinned and unmodified, plu
 - `configs/`: build settings for each board (`toolhead.config`, `mainboard.config`)
 - `tools/`: build, deploy and flash over SSH
 - `FINDINGS.md`: what's on the printer and what Sovol changed
-- `from-printer/config/`: the stock 1.4.7 printer config
+- `stock-config/config/`: stock 1.4.7 printer config (from the recovery image)
+- `from-printer/config/`: this printer's config before the 2026-11-14 reset (user mods, to re-add later)
+- `sovol-host/`: Sovol's scripts, services and system files outside Klipper (stock)
+- `stock-firmware/`: exact backup of the stock mainboard firmware, read from the board
 - `sovol-official/`: Sovol's published update package, manuals and recovery-image checksums
 
 ## Workflow
@@ -41,4 +44,4 @@ To restore stock firmware, use the official image from the wiki above
 This repo's `sovol-1.4.7-backup` release keeps a copy of that same file, only as a backup in case
 Sovol's link goes away. Checksum: `sovol-official/SHA256SUMS`.
 Stock toolhead firmware is on the printer at `~/printer_data/build/extruder_mcu_klipper.bin`.
-No stock mainboard image exists; rebuild it from this repo (patches unchanged reproduce Sovol's code).
+Stock mainboard firmware: `tools/flash-mcu.sh mainboard stock-firmware/stock-mainboard-app.bin` (see `stock-firmware/README.md`).

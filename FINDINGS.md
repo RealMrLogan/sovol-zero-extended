@@ -41,3 +41,15 @@ See README.md.
 - https://github.com/Sovol3d/klipper (last commit bae68982, 2024-10-29): pre-Zero (SV06/SV08 era), older than the Zero tree.
 - So the Klipper tree pulled from the printer (captured in sovol-klipper/*.patch) is the most complete Zero
   source available. Sovol never published it.
+
+## Stock baseline (2026-11-14)
+- Reference = official 1.4.7 recovery image. Its ~/klipper (commit 8a8b5e8 "1.4.5") equals upstream faa89be8 + patches/
+  (only Sovol's README/.gitignore edits dropped). The toolhead build from patches/ is byte-identical to Sovol's image.
+- The printer had user edits (PROBE_CONTACT_Z_OFFSET_CALIBRATE in probe_eddy_current.py; custom Macro.cfg/printer.cfg).
+  Reset to stock on 2026-11-14, keeping the printer's SAVE_CONFIG calibration block; the user's versions are in
+  from-printer/config and in git history (commit 996f615).
+- Mainboard runs an older Sovol build (14d7b18-dirty, Feb 2025) that no available source rebuilds exactly
+  (closest, cc8afd8: same size, different bytes). Exact copy kept in stock-firmware/. Flashing the mainboard
+  from patches/ gives Sovol's newer 1.4.7 board code instead: move queue 2048 -> 4096, reworked I2C error
+  handling (unused on the mainboard), and ws2811 timing whose delays round to zero at 400 MHz, which may break
+  the stock screen's power-on white LEDs (Klipper's [neopixel] still sets them once connected).

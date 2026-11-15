@@ -1,0 +1,25 @@
+diff --git a/scripts/install.sh b/scripts/install.sh
+index 0fe276e..3e864f7 100755
+--- a/scripts/install.sh
++++ b/scripts/install.sh
+@@ -381,16 +381,16 @@ function abort_msg() {
+ function main() {
+ 
+ # Step 1: Print welcome message
+-welcome_msg
++#welcome_msg
+ 
+ # Step 2: Ask to proceed
+-continue_install
++#continue_install
+ 
+ # Step 3: Initial checks for dependencies (klipper/moonraker)
+-initial_check
++#initial_check
+ 
+ # Step 4: Stop related services
+-stop_services
++#stop_services
+ 
+ # Step 5: Determine data structure
+ determine_data_structure

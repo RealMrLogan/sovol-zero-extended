@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Flash the last build-mcu.sh image over Katapult. Usage: flash-mcu.sh toolhead|mainboard
+# Flash over Katapult. Usage: flash-mcu.sh toolhead|mainboard [local.bin]
+# Without a file it flashes the last build-mcu.sh image; with one (e.g. stock-firmware/*.bin) it uploads and flashes that.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 board_info "${1:-}"; board=$1
 bin=$B/klipper/out-$board/klipper.bin
+if [ -n "${2:-}" ]; then
+    rsh "mkdir -p $B" && rsync -t "$2" "$PRINTER:$B/upload-$board.bin" && bin=$B/upload-$board.bin
+fi
 require_idle
 check_bin "$bin"
 if [ "$board" = mainboard ]; then

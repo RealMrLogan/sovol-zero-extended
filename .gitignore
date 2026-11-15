@@ -5,3 +5,4 @@ from-printer/klipper/
 *.img
 *.img.zst
 sovol-official/H616_*.zip
+.stockimg/

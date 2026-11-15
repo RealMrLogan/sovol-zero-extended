@@ -7,12 +7,12 @@ Subject: [PATCH] probe: eddy current probing, contact homing and z offset
 ---
  klippy/extras/bed_mesh.py             |   6 +-
  klippy/extras/homing.py               |  15 ++-
- klippy/extras/ldc1612.py              |  92 ++++++++++++++--
+ klippy/extras/ldc1612.py              |  92 +++++++++++++++--
  klippy/extras/probe.py                |  10 +-
- klippy/extras/probe_eddy_current.py   | 144 ++++++++++++++++++++++----
- klippy/extras/z_offset_calibration.py | 117 +++++++++++++++++++++
- src/sensor_ldc1612.c                  | 137 +++++++++++++++++++++---
- 7 files changed, 462 insertions(+), 59 deletions(-)
+ klippy/extras/probe_eddy_current.py   | 139 ++++++++++++++++++++++----
+ klippy/extras/z_offset_calibration.py | 117 ++++++++++++++++++++++
+ src/sensor_ldc1612.c                  | 137 +++++++++++++++++++++----
+ 7 files changed, 457 insertions(+), 59 deletions(-)
  create mode 100644 klippy/extras/z_offset_calibration.py
 
 diff --git a/klippy/extras/bed_mesh.py b/klippy/extras/bed_mesh.py
@@ -312,7 +312,7 @@ index c467e181e..3ce365165 100644
              # Check samples tolerance
              z_positions = [p[2] for p in positions]
 diff --git a/klippy/extras/probe_eddy_current.py b/klippy/extras/probe_eddy_current.py
-index 932d1bfa3..2622c57e5 100644
+index 932d1bfa3..ec155d07c 100644
 --- a/klippy/extras/probe_eddy_current.py
 +++ b/klippy/extras/probe_eddy_current.py
 @@ -9,6 +9,10 @@ from . import ldc1612, probe, manual_probe
@@ -506,12 +506,25 @@ index 932d1bfa3..2622c57e5 100644
              raise self._printer.command_error("Eddy current sensor error")
          if res != mcu.MCU_trsync.REASON_ENDSTOP_HIT:
              return 0.
-@@ -350,7 +381,20 @@ class EddyEndstopWrapper:
+@@ -350,7 +381,7 @@ class EddyEndstopWrapper:
      def probing_move(self, pos, speed):
          # Perform probing move
          phoming = self._printer.lookup_object('homing')
 -        trig_pos = phoming.probing_move(self, pos, speed)
 +        trig_pos = phoming.probing_move(self, pos, speed, non_contact_probe=True)
+         if not self._trigger_time:
+             return trig_pos
+         # Extract samples
+@@ -359,7 +390,20 @@ class EddyEndstopWrapper:
+         toolhead = self._printer.lookup_object("toolhead")
+         toolhead_pos = toolhead.get_position()
+         self._gather.note_probe(start_time, end_time, toolhead_pos)
+-        return self._gather.pull_probed()[0]
++        return self._gather.pull_probed(probe_method=_ProbeType.TYPE_DEFAULT)[0]
++    def contact_probing_move(self, pos, speed):
++        # Perform probing move
++        phoming = self._printer.lookup_object('homing')
++        trig_pos = phoming.probing_move(self, pos, speed, non_contact_probe=False)
 +        if not self._trigger_time:
 +            return trig_pos
 +        # Extract samples
@@ -520,24 +533,11 @@ index 932d1bfa3..2622c57e5 100644
 +        toolhead = self._printer.lookup_object("toolhead")
 +        toolhead_pos = toolhead.get_position()
 +        self._gather.note_probe(start_time, end_time, toolhead_pos)
-+        return self._gather.pull_probed(probe_method=_ProbeType.TYPE_DEFAULT)[0]
-+    def contact_probing_move(self, pos, speed):
-+        # Perform probing move
-+        phoming = self._printer.lookup_object('homing')
-+        trig_pos = phoming.probing_move(self, pos, speed, non_contact_probe=False)
-         if not self._trigger_time:
-             return trig_pos
-         # Extract samples
-@@ -359,7 +403,7 @@ class EddyEndstopWrapper:
-         toolhead = self._printer.lookup_object("toolhead")
-         toolhead_pos = toolhead.get_position()
-         self._gather.note_probe(start_time, end_time, toolhead_pos)
--        return self._gather.pull_probed()[0]
 +        return self._gather.pull_probed(probe_method=_ProbeType.TYPE_VIR_TOUCH)[0]
      def multi_probe_begin(self):
          self._gather = EddyGatherSamples(self._printer, self._sensor_helper,
                                           self._calibration, self._z_offset)
-@@ -429,7 +473,27 @@ class PrinterEddyProbe:
+@@ -429,7 +473,25 @@ class PrinterEddyProbe:
              config, self, self.mcu_probe.query_endstop)
          self.probe_offsets = probe.ProbeOffsetsHelper(config)
          self.probe_session = probe.ProbeSessionHelper(config, self.mcu_probe)
@@ -560,12 +560,10 @@ index 932d1bfa3..2622c57e5 100644
 +                                               note_valid=False)
 +        self.gcode.register_command('RUN_PROBE_VIR_CONTACT', self.cmd_RUN_PROBE_VIR_CONTACT,
 +                                    desc=self.cmd_RUN_PROBE_VIR_CONTACT_help)
-+        self.gcode.register_command('PROBE_CONTACT_Z_OFFSET_CALIBRATE', self.cmd_PROBE_CONTACT_Z_OFFSET_CALIBRATE)
-+
      def add_client(self, cb):
          self.sensor_helper.add_client(cb)
      def get_probe_params(self, gcmd=None):
-@@ -437,7 +501,9 @@ class PrinterEddyProbe:
+@@ -437,7 +499,9 @@ class PrinterEddyProbe:
      def get_offsets(self):
          return self.probe_offsets.get_offsets()
      def get_status(self, eventtime):
@@ -576,7 +574,7 @@ index 932d1bfa3..2622c57e5 100644
      def start_probe_session(self, gcmd):
          method = gcmd.get('METHOD', 'automatic').lower()
          if method in ('scan', 'rapid_scan'):
-@@ -447,6 +513,44 @@ class PrinterEddyProbe:
+@@ -447,6 +511,41 @@ class PrinterEddyProbe:
          return self.probe_session.start_probe_session(gcmd)
      def register_drift_compensation(self, comp):
          self.calibration.register_drift_compensation(comp)
@@ -615,9 +613,6 @@ index 932d1bfa3..2622c57e5 100644
 +    def cmd_RUN_PROBE_VIR_CONTACT(self, gcmd):
 +        self.run_contact_probe(gcmd)
 +    cmd_RUN_PROBE_VIR_CONTACT_help = "VIRTUAL CONTACT PROBE"
-+    def cmd_PROBE_CONTACT_Z_OFFSET_CALIBRATE(self, gcmd):
-+        pos = self.run_contact_probe(gcmd)
-+        self.gcode.run_script_from_command(f'SET_GCODE_OFFSET Z={pos[2]}')
  
  class DummyDriftCompensation:
      def get_temperature(self):
