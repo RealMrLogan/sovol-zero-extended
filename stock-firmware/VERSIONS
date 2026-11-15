@@ -1,0 +1,3 @@
+# board      version string the stock image reports (klippy.log "Loaded MCU")
+toolhead     cc8afd8-dirty-20250310_015728-SPI-XI
+mainboard    14d7b18-dirty-20250210_015142-SPI-XI

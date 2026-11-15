@@ -1,0 +1,43 @@
+name: release
+
+# Push a tag like v0.2.0 (or v0.2.0-rc.1) to build a release zip and open a DRAFT release.
+# Install the draft on a printer (tools/install-release.sh <tag>), then publish it by hand.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Debian 11 ships arm-none-eabi-gcc 15:8-2019-q3-1+b1, the compiler Sovol built the stock images with
+    container: debian:bullseye
+    steps:
+      - name: Install toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git make python3 gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi curl
+          arm-none-eabi-gcc --version | head -1
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build release (fails unless the toolhead build is byte-identical to stock)
+        run: |
+          git config --global --add safe.directory '*'
+          tools/make-release.sh "$GITHUB_REF_NAME"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C /tmp
+          notes=$(awk -v v="$GITHUB_REF_NAME" '$1 == "##" {p = ($2 == v)} p' CHANGELOG.md)
+          prerelease=$([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease || true)
+          /tmp/gh_2.63.2_linux_amd64/bin/gh release create "$GITHUB_REF_NAME" --draft $prerelease \
+            -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "${notes:-See CHANGELOG.md}" \
+            dist/*.zip dist/*.zip.sha256
+        shell: bash
