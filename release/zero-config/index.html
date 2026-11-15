@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zero Extended</title>
+<style>
+  :root { color-scheme: dark; --bg: #121212; --card: #1e1e1e; --line: #2c2c2c; --text: #e6e6e6;
+          --muted: #9a9a9a; --accent: #d41216; --ok: #4caf50; --err: #ef5350; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; }
+  header a { color: var(--muted); font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; }
+  .setting + .setting { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+  .setting label { font-weight: 600; display: block; }
+  .setting p { color: var(--muted); margin: 2px 0 10px; font-size: 14px; }
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  .choices button { background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+                    padding: 8px 14px; font: inherit; cursor: pointer; }
+  .choices button:hover:not(:disabled) { border-color: var(--muted); }
+  .choices button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .choices button:disabled { opacity: .5; cursor: wait; }
+  .msg { min-height: 1.5em; margin-top: 8px; font-size: 14px; }
+  .msg.ok { color: var(--ok); } .msg.err { color: var(--err); }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Sovol Zero Extended</h1><a href="/">Back to Mainsail</a></header>
+  <section class="card"><h2>Installed</h2><dl id="status"><dt>Loading…</dt><dd></dd></dl></section>
+  <section class="card"><h2>Settings</h2><div id="settings"></div></section>
+</main>
+<script>
+const $ = (sel) => document.querySelector(sel);
+const text = (tag, s, cls) => { const e = document.createElement(tag); e.textContent = s; if (cls) e.className = cls; return e; };
+
+function renderStatus(st) {
+  const dl = $("#status"); dl.replaceChildren();
+  const rows = [["Release", st.version], ...Object.entries(st.boards).map(([b, v]) => [b[0].toUpperCase() + b.slice(1), v])];
+  for (const [k, v] of rows) dl.append(text("dt", k), text("dd", v || "unknown"));
+}
+
+function renderSetting(key, s) {
+  const box = document.createElement("div"); box.className = "setting";
+  const msg = text("div", s.error || "", "msg" + (s.error ? " err" : ""));
+  const choices = document.createElement("div"); choices.className = "choices";
+  choices.setAttribute("role", "group"); choices.setAttribute("aria-label", s.label);
+  for (const [value, label] of Object.entries(s.choices)) {
+    const b = text("button", label); b.type = "button";
+    b.setAttribute("aria-pressed", String(value === s.value));
+    b.onclick = async () => {
+      if (value === s.value) return;
+      choices.querySelectorAll("button").forEach((x) => (x.disabled = true));
+      msg.className = "msg"; msg.textContent = "Applying… the screen is restarting";
+      try {
+        const r = await fetch("api/settings/" + key, { method: "POST", headers: { "Content-Type": "application/json" },
+                                                       body: JSON.stringify({ value }) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || r.statusText);
+        s.value = d.value;
+        choices.querySelectorAll("button").forEach((x, i) => x.setAttribute("aria-pressed", String(Object.keys(s.choices)[i] === s.value)));
+        msg.className = "msg ok"; msg.textContent = "Applied.";
+      } catch (e) { msg.className = "msg err"; msg.textContent = "Failed: " + e.message; }
+      choices.querySelectorAll("button").forEach((x) => (x.disabled = false));
+    };
+    choices.append(b);
+  }
+  box.append(text("label", s.label), text("p", s.help), choices, msg);
+  return box;
+}
+
+fetch("api/settings").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); })
+  .then((d) => {
+    renderStatus(d.status);
+    $("#settings").replaceChildren(...Object.entries(d.settings).map(([k, s]) => renderSetting(k, s)));
+  })
+  .catch((e) => { $("#settings").replaceChildren(text("div", "Could not load settings: " + e.message, "msg err")); });
+</script>
+</body>
+</html>

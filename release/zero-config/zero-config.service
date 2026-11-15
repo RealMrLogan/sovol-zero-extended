@@ -1,0 +1,13 @@
+# Installed by sovol-zero-extended as /etc/systemd/system/zero-config.service (@USER@/@HOME@ filled in).
+[Unit]
+Description=sovol-zero-extended config page
+After=network.target
+
+[Service]
+User=@USER@
+ExecStart=/usr/bin/python3 @HOME@/zero-extended/zero-config/server.py 7130
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

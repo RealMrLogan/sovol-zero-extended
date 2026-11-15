@@ -15,6 +15,8 @@ The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the
 - `sovol-host/`: Sovol's scripts, services and system files outside Klipper (stock)
 - `stock-firmware/`: stock board images (mainboard read back from the board) and their version strings
 - `release/`: what goes in a release zip (`install.sh`, `flash-board.sh`), `boards.conf` and `apps.conf`
+- `release/zero-config/`: the config page at `http://<printer>/extended/` (stdlib Python server, one page, nginx snippet).
+  Settings live in `SETTINGS` in `server.py`: each has choices plus a get/set; add new options there.
 - `sovol-official/`: Sovol's published update package, manuals and recovery-image checksums
 
 ## Workflow

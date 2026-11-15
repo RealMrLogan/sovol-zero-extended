@@ -65,7 +65,8 @@ while read -r app type url stock pin _; do
     esac
 done < <(grep -v '^\s*#' "$ROOT/release/apps.conf" | grep .)
 cp "$ROOT/release/apps.conf" "$stage/"
-cp -r "$ROOT/release/systemd" "$stage/"
+cp -r "$ROOT/release/systemd" "$ROOT/release/zero-config" "$stage/"
+find "$stage/zero-config" -name __pycache__ -prune -exec rm -rf {} +
 
 cp "$ROOT/release/install.sh" "$ROOT/release/flash-board.sh" "$stage/"
 chmod +x "$stage"/*.sh

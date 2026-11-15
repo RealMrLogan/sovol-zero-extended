@@ -25,9 +25,15 @@ log() { echo "==> $*"; }
 mf() { python3 -c "import json; d=json.load(open('manifest.json')); print($1)"; }
 moon() { curl -sf "http://localhost:7125/$1"; }
 klipper_state() { moon printer/info | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["state"])' 2>/dev/null || echo down; }
-wait_ready() {
-    local s
-    for _ in $(seq 45); do s=$(klipper_state); [ "$s" = ready ] && return 0; sleep 2; done
+wait_ready() {   # a host restart can't clear an MCU shutdown (e.g. a startup race in klippy), so try one FIRMWARE_RESTART
+    local s fw=0
+    for _ in $(seq 45); do
+        s=$(klipper_state); [ "$s" = ready ] && return 0
+        if [[ $s == shutdown || $s == error ]] && [ $fw = 0 ]; then
+            fw=1; echo "Klipper is in $s, trying FIRMWARE_RESTART"; curl -sf -X POST http://localhost:7125/printer/firmware_restart >/dev/null || true
+        fi
+        sleep 2
+    done
     echo "Klipper state: $s"; tail -20 "$HOME/printer_data/logs/klippy.log"; return 1
 }
 running_version() {   # board -> mcu_version reported by the running firmware
@@ -80,7 +86,7 @@ while read -r name type _ _ pin services; do
             changed=1; log "$name: ${have:0:7} -> ${pin:0:7}"
         fi
         if ! git -C "$dir" diff --quiet HEAD; then dirty+=" $name"; log "$name: has local changes, will stash them"; fi
-    elif rsync -rcni --delete --exclude=config.json "apps/$name/" "$dir/" | grep -q .; then
+    elif [ -n "$(rsync -rcni --delete --exclude=config.json "apps/$name/" "$dir/")" ]; then
         changed=1; log "$name: differs from the release's build"
     fi
     if [ $changed = 1 ]; then apps+=("$name"); [ "$services" = - ] || restart+=" $services"; fi
@@ -113,6 +119,7 @@ restore_host() {
     fi
     for d in "$backup"/apps/*/; do if [ -d "$d" ]; then rsync -a --delete "$d" "$HOME/$(basename "$d")/"; fi; done
     for name in $dirty; do git -C "$HOME/$name" stash pop -q || log "$name: local changes kept in git stash"; done
+    if [ -d "$backup/zero-config" ]; then rsync -a --delete "$backup/zero-config/" "$STATE/zero-config/"; fi
     restart_services || true
     wait_ready || true
 }
@@ -144,6 +151,28 @@ dropin=/etc/systemd/system/crowsnest.service.d/zero-extended.conf
 if [ -f /etc/systemd/system/crowsnest.service ] && ! cmp -s systemd/crowsnest-zero.conf "$dropin"; then
     sudo -n install -D -m644 systemd/crowsnest-zero.conf "$dropin" && sudo -n systemctl daemon-reload
     log "crowsnest: start delay installed as a systemd drop-in"
+fi
+
+# config page (zero-config/): served by its own service on localhost, reached through nginx at /extended/
+if [ -d "$STATE/zero-config" ]; then cp -a "$STATE/zero-config" "$backup/"; fi
+if [ -n "$(rsync -rci --delete --exclude=__pycache__ zero-config/ "$STATE/zero-config/")" ]; then
+    restart+=" zero-config"; log "config page: updated"
+fi
+unit=$(sed "s|@USER@|$(id -un)|; s|@HOME@|$HOME|" zero-config/zero-config.service)
+if [ "$unit" != "$(cat /etc/systemd/system/zero-config.service 2>/dev/null)" ]; then
+    echo "$unit" | sudo -n tee /etc/systemd/system/zero-config.service >/dev/null
+    sudo -n systemctl daemon-reload && sudo -n systemctl enable -q zero-config
+    restart+=" zero-config"; log "config page: service installed"
+fi
+site=/etc/nginx/sites-available/mainsail; snippet=/etc/nginx/snippets/zero-extended.conf
+if ! cmp -s zero-config/nginx.conf "$snippet" || ! grep -q "include $snippet;" "$site"; then
+    cp "$site" "$backup/nginx-mainsail"
+    sudo -n install -D -m644 zero-config/nginx.conf "$snippet"
+    grep -q "include $snippet;" "$site" || sudo -n sed -i "/server_name _;/a\    include $snippet;" "$site"
+    if ! sudo -n nginx -t -q; then
+        sudo -n cp "$backup/nginx-mainsail" "$site"; echo "nginx rejected the config page snippet"; false
+    fi
+    sudo -n systemctl reload nginx; log "config page: nginx set up at /extended/"
 fi
 
 log "installing host code"

@@ -2,6 +2,14 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
+## v0.1.2
+
+- Config page at `http://<printer>/extended/`: shows the installed release and board firmware, and has the
+  first setting, **screen orientation** (landscape, portrait, and both flipped; rotates touch to match).
+  Served by a small `zero-config` service behind nginx, allowed for whoever Moonraker allows.
+- install.sh retries once with `FIRMWARE_RESTART` when Klipper comes back in shutdown/error (a rare klippy
+  startup race on the CAN toolhead left the MCU shut down, which a service restart can't clear)
+
 ## v0.1.1
 
 Upstream apps are now pinned and installed by releases, like Klipper. Same versions as stock 1.4.7.
