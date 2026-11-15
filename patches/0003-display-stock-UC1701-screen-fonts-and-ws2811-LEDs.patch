@@ -1,0 +1,2294 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Sovol (extracted from Zero 1.4.7)" <sovol@invalid>
+Date: Sat, 14 Nov 2026 20:57:19 -0700
+Subject: [PATCH] display: stock UC1701 screen, fonts and ws2811 LEDs
+
+Board init in stm32f1.c/stm32h7.c also drives fixed GPIOs (PB7/PA6, PB0/PE11).
+---
+ klippy/extras/display/display.cfg |  22 +-
+ klippy/extras/display/menu.cfg    | 826 ++++++++++++++----------------
+ klippy/extras/display/menu.py     |  91 +++-
+ src/Makefile                      |   2 +-
+ src/UC1701.c                      | 381 ++++++++++++++
+ src/UC1701.h                      |  10 +
+ src/fonts.c                       |  50 ++
+ src/i2ccmds.c                     |   6 +-
+ src/i2ccmds.h                     |   3 +
+ src/stm32/i2c.c                   | 184 +++++--
+ src/stm32/stm32f1.c               |  10 +-
+ src/stm32/stm32h7.c               |  13 +-
+ src/ws2811.c                      |  90 ++++
+ src/ws2811.h                      |  13 +
+ 14 files changed, 1190 insertions(+), 511 deletions(-)
+ mode change 100644 => 100755 klippy/extras/display/display.cfg
+ mode change 100644 => 100755 klippy/extras/display/menu.cfg
+ create mode 100644 src/UC1701.c
+ create mode 100644 src/UC1701.h
+ create mode 100644 src/fonts.c
+ create mode 100755 src/ws2811.c
+ create mode 100755 src/ws2811.h
+
+diff --git a/klippy/extras/display/display.cfg b/klippy/extras/display/display.cfg
+old mode 100644
+new mode 100755
+index 042c32727..e5fc5c1ed
+--- a/klippy/extras/display/display.cfg
++++ b/klippy/extras/display/display.cfg
+@@ -38,8 +38,8 @@ text:
+ 
+ [display_template _fan_speed]
+ text:
+-  {% if 'fan' in printer %}
+-    {% set speed = printer.fan.speed %}
++  {% if 'fan_generic fan0' in printer %}
++    {% set speed = printer["fan_generic fan0"].speed %}
+     {% if speed %}
+       {% set frame = (printer.toolhead.estimated_print_time|int % 2) + 1 %}
+       ~fan{frame}~
+@@ -51,21 +51,25 @@ text:
+ 
+ [display_template _printing_time]
+ text:
+-  {% set ptime = printer.idle_timeout.printing_time %}
++  {% set ptime = printer.print_stats.print_duration %}
+   { "%02d:%02d" % (ptime // (60 * 60), (ptime // 60) % 60) }
+ 
+ [display_template _print_status]
+ text:
+   {% if printer.display_status.message %}
+     { printer.display_status.message }
+-  {% elif printer.idle_timeout.printing_time %}
+-    {% set pos = printer.toolhead.position %}
+-    { "X%-4.0fY%-4.0fZ%-5.2f" % (pos.x, pos.y, pos.z) }
++  {% elif printer.print_stats.print_duration %}
++    {% if printer.print_stats.filename %}
++      { printer.print_stats.filename.split('/')[-1] }
++    {% else %}
++      Ready
++    {% endif %}
+   {% else %}
+     Ready
+   {% endif %}
+ 
+ 
++
+ ######################################################################
+ # Default 16x4 display
+ ######################################################################
+@@ -76,7 +80,7 @@ text:
+   {% set active_extruder = printer.toolhead.extruder %}
+   { render("_heater_temperature", param_heater_name=active_extruder) }
+ 
+-[display_data _default_16x4 fan]
++[display_data _default_16x4 fan_generic]
+ position: 0, 10
+ text: { render("_fan_speed") }
+ 
+@@ -114,7 +118,7 @@ text: { render("_print_status") }
+ position: 0, 0
+ text: { render("_heater_temperature", param_heater_name="extruder") }
+ 
+-[display_data _multiextruder_16x4 fan]
++[display_data _multiextruder_16x4 fan_generic]
+ position: 0, 10
+ text: { render("_fan_speed") }
+ 
+@@ -161,7 +165,7 @@ text: { render("_heater_temperature", param_heater_name="extruder1") }
+ [display_data _default_20x4 fan]
+ position: 1, 10
+ text:
+-  {% if 'fan' in printer %}
++  {% if 'fan_generic fan0' in printer %}
+     { "Fan {:^4.0%}".format(printer.fan.speed) }
+   {% endif %}
+ 
+diff --git a/klippy/extras/display/menu.cfg b/klippy/extras/display/menu.cfg
+old mode 100644
+new mode 100755
+index b0df9fc50..47fdbb4f2
+--- a/klippy/extras/display/menu.cfg
++++ b/klippy/extras/display/menu.cfg
+@@ -1,93 +1,55 @@
+-# This file defines the default layout of the printer's menu.
+-
+-# It is not necessary to edit this file to change the menu. Instead,
+-# one may override any of the sections defined here by defining a
+-# section with the same name in the main printer.cfg config file.
+-
+-### DEFAULT MENU ###
+-# Main
+-#   + Tune
+-#       + Speed: 000%
+-#       + Flow: 000%
+-#       + Offset Z:00.00
+-#   + OctoPrint
+-#       + Pause printing
+-#       + Resume printing
+-#       + Abort printing
+-#   + SD Card
+-#       + Start printing
+-#       + Resume printing
+-#       + Pause printing
+-#       + Cancel printing
+-#       + ... (files)
+-#   + Control
+-#       + Home All
+-#       + Home Z
+-#       + Home X/Y
+-#       + Z Tilt
+-#       + Quad Gantry Lvl
+-#       + Bed Mesh
+-#       + Steppers off
+-#       + Fan: OFF
+-#       + Fan speed: 000%
+-#       + Lights: OFF
+-#       + Lights: 000%
+-#       + Move 10mm
+-#           + Move X:000.0
+-#           + Move Y:000.0
+-#           + Move Z:000.0
+-#           + Move E:+000.0
+-#       + Move 1mm
+-#           + Move X:000.0
+-#           + Move Y:000.0
+-#           + Move Z:000.0
+-#           + Move E:+000.0
+-#       + Move 0.1mm
+-#           + Move X:000.0
+-#           + Move Y:000.0
+-#           + Move Z:000.0
+-#           + Move E:+000.0
+-#   + Temperature
+-#       + Ex0:000 (0000)
+-#       + Ex1:000 (0000)
+-#       + Bed:000 (0000)
+-#       + Preheat PLA
+-#           + Preheat all
+-#           + Preheat hotend
+-#           + Preheat hotbed
+-#       + Preheat ABS
+-#           + Preheat all
+-#           + Preheat hotend
+-#           + Preheat hotbed
+-#       + Cooldown
+-#           + Cooldown all
+-#           + Cooldown hotend
+-#           + Cooldown hotbed
+-#   + Filament
+-#       + Ex0:000 (0000)
+-#       + Load Fil. fast
+-#       + Load Fil. slow
+-#       + Unload Fil.fast
+-#       + Unload Fil.slow
+-#       + Feed: 000.0
+-#   + Setup
+-#       + Save config
+-#       + Restart
+-#           + Restart host
+-#           + Restart FW
+-#       + PID tuning
+-#           + Tune Hotend PID
+-#           + Tune Hotbed PID
+-#       + Calibration
+-#           + Delta cal. auto
+-#           + Delta cal. man
+-#               + Start probing
+-#               + Move Z: 000.00
+-#               + Test Z: ++
+-#               + Accept
+-#               + Abort
+-#           + Bed probe
+-#       + Dump parameters
++### menu resume ###
++[menu __resume]
++type: list
++name: Resume
++
++[menu __resume __resume]
++type: command
++name: Resume
++gcode:
++    RESUME_INTERRUPTED
++
++[menu __resume __cancel]
++type: command
++name: Cancel
++gcode:
++    clear_last_file
++    SAVE_VARIABLE VARIABLE=was_interrupted VALUE=False
++    RUN_SHELL_COMMAND CMD=clear_plr
++    M117 Ready
++
++### menu reset ###
++[menu __reset]
++type: list
++name: Reset
++
++[menu __reset __showip]
++type: command
++name: Show IP
++gcode:
++    _GET_IP
++
++[menu __reset __reset]
++type: command
++name: Calibration
++gcode: 
++    M117 Eddy Calibrate
++    G28 X
++    G28 Y 
++    Z_OFFSET_CALIBRATION METHOD=force_overlay
++    G90
++    G1 Z15
++    M117 Input Shaping
++    SHAPER_CALIBRATE
++    SAVE_VARIABLE VARIABLE=factory_reset VALUE=True
++    SAVE_CONFIG
++
++[menu __reset __skipcalibrate]
++type: command
++name: Skip Calibrate
++gcode:
++    SAVE_VARIABLE VARIABLE=factory_reset VALUE=True
++    SET_DISPLAY_TEXT
+ 
+ ### menu main ###
+ [menu __main]
+@@ -97,9 +59,25 @@ name: Main
+ ### menu tune ###
+ [menu __main __tune]
+ type: list
+-enable: {printer.idle_timeout.state == "Printing"}
++enable: {printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing"}
+ name: Tune
+ 
++[menu __main __tune __get_ip]
++type: command
++name: "Show IP"
++gcode:
++    _GET_IP
++
++[menu __main __tune __offsetz]
++type: input
++name: Offset Z:{'%05.2f' % menu.input}
++input: {printer.gcode_move.homing_origin.z}
++input_min: -5
++input_max: 5
++input_step: 0.01
++gcode:
++    SET_GCODE_OFFSET Z={'%.3f' % menu.input} MOVE=1
++
+ [menu __main __tune __speed]
+ type: input
+ name: Speed: {'%3d' % (menu.input*100)}%
+@@ -107,7 +85,6 @@ input: {printer.gcode_move.speed_factor}
+ input_min: 0.01
+ input_max: 5
+ input_step: 0.01
+-realtime: True
+ gcode:
+     M220 S{'%d' % (menu.input*100)}
+ 
+@@ -118,87 +95,144 @@ input: {printer.gcode_move.extrude_factor}
+ input_min: 0.01
+ input_max: 2
+ input_step: 0.01
+-realtime: True
+ gcode:
+     M221 S{'%d' % (menu.input*100)}
+ 
+-[menu __main __tune __offsetz]
++[menu __main __tune __fanspeed]
+ type: input
+-name: Offset Z:{'%05.3f' % menu.input}
+-input: {printer.gcode_move.homing_origin.z}
+-input_min: -5
+-input_max: 5
+-input_step: 0.005
+-realtime: True
++name: Fan speed: {'%3.0f' % (menu.input*100)}%
++input: {printer["fan_generic fan0"].speed}
++input_min: 0
++input_max: 1
++input_step: 0.01
+ gcode:
+-    SET_GCODE_OFFSET Z={'%.3f' % menu.input} MOVE=1
++    M106 S{'%3.0f' % (menu.input*255)}
+ 
++[menu __main __tune __hotend0_target]
++type: input
++enable: {('extruder' in printer) and ('extruder' in printer.heaters.available_heaters)}
++name: {"Ex0:%3.0f (%4.0f)" % (menu.input, printer.extruder.temperature)}
++input: {printer.extruder.target}
++input_min: 0
++input_max: {printer.configfile.config.extruder.max_temp}
++input_step: 1
++gcode: M104 T0 S{'%.0f' % menu.input}
+ 
+-### menu octoprint ###
+-[menu __main __octoprint]
+-type: list
+-name: OctoPrint
++[menu __main __tune __hotend1_target]
++type: input
++enable: {('extruder1' in printer) and ('extruder1' in printer.heaters.available_heaters)}
++name: {"Ex1:%3.0f (%4.0f)" % (menu.input, printer.extruder1.temperature)}
++input: {printer.extruder1.target}
++input_min: 0
++input_max: {printer.configfile.config.extruder1.max_temp}
++input_step: 1
++gcode: M104 T1 S{'%.0f' % menu.input}
+ 
+-[menu __main __octoprint __pause]
+-type: command
+-enable: {printer.idle_timeout.state == "Printing"}
+-name: Pause printing
++[menu __main __tune __hotbed_target]
++type: input
++enable: {'heater_bed' in printer}
++name: {"Bed:%3.0f (%4.0f)" % (menu.input, printer.heater_bed.temperature)}
++input: {printer.heater_bed.target}
++input_min: 0
++input_max: {printer.configfile.config.heater_bed.max_temp}
++input_step: 1
++gcode: M140 S{'%.0f' % menu.input}
++
++[menu __main __tune __chamber_temp]
++type: input
++enable: {'heater_generic chamber_heater' in printer}
++name: {"Cham:%3.0f (%4.0f)" % (menu.input, printer["heater_generic chamber_heater"].temperature)}
++input: {printer["heater_generic chamber_heater"].target}
++input_min: 0
++input_max: 60
++input_step: 1
++gcode: SET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET={'%.0f' % menu.input}
++
++[menu __main __tune __temp_fan]
++type: input
++name: {"Tfan:%3.0f (%3.0f)" % (menu.input,printer["temperature_fan exhaust_fan"].temperature)}
++input: {printer["temperature_fan exhaust_fan"].target}
++input_min: 0
++input_max: 60
++input_step: 1
++gcode: SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=exhaust_fan TARGET={'%.0f' % menu.input}
++
++[menu __main __tune __auxiliaryfanspeed]
++type: input
++name: AuxFan:{'%3.0f' % (menu.input*100)}%
++input: {printer["fan_generic fan2"].speed}
++input_min: 0
++input_max: 1
++input_step: 0.01
+ gcode:
+-    {action_respond_info('action:pause')}
++    M106 P2 S{'%3.0f' % (menu.input*255)}
+ 
+-[menu __main __octoprint __resume]
+-type: command
+-enable: {not printer.idle_timeout.state == "Printing"}
+-name: Resume printing
++[menu __main __tune __ledonoff]
++type: input
++name: Led: {'ON ' if menu.input else 'OFF'}
++input: {printer['output_pin main_led'].value}
++input_min: 0
++input_max: 1
++input_step: 1
+ gcode:
+-    {action_respond_info('action:resume')}
++    SET_PIN PIN=main_led VALUE={1 if menu.input else 0}
+ 
+-[menu __main __octoprint __abort]
++[menu __main __filament1]
++type: list
++enable: {('virtual_sdcard' in printer) and (printer.print_stats.state == "printing" or printer.print_stats.state == "paused")}
++name: Change fil
++
++[menu __main __filament1 __loads]
+ type: command
+-enable: {printer.idle_timeout.state == "Printing"}
+-name: Abort printing
++name: Load Fil
+ gcode:
+-    {action_respond_info('action:cancel')}
+-
+-### menu virtual sdcard ###
+-[menu __main __sdcard]
+-type: vsdlist
+-enable: {('virtual_sdcard' in printer)}
+-name: SD Card
++    PAUSE
++    SAVE_GCODE_STATE NAME=__filament__load
++    LOAD_FILAMENT
++    RESTORE_GCODE_STATE NAME=__filament__load
+ 
+-[menu __main __sdcard __start]
++[menu __main __filament1 __unloads]
+ type: command
+-enable: {('virtual_sdcard' in printer) and printer.virtual_sdcard.file_path and not printer.virtual_sdcard.is_active}
+-name: Start printing
+-gcode: M24
++name: Unload Fil
++gcode:
++    PAUSE
++    SAVE_GCODE_STATE NAME=__filament__load
++    UNLOAD_FILAMENT
++    RESTORE_GCODE_STATE NAME=__filament__load
+ 
+-[menu __main __sdcard __resume]
++[menu __main __resume]
+ type: command
+ enable: {('virtual_sdcard' in printer) and printer.print_stats.state == "paused"}
+ name: Resume printing
+ gcode:
++    M117 Resume printing
+     {% if "pause_resume" in printer %}
+         RESUME
+     {% else %}
+         M24
+     {% endif %}
+ 
+-[menu __main __sdcard __pause]
++[menu __main __pause]
+ type: command
+ enable: {('virtual_sdcard' in printer) and printer.print_stats.state == "printing"}
+ name: Pause printing
+ gcode:
++    M117 Pause printing
+     {% if "pause_resume" in printer %}
+         PAUSE
+     {% else %}
+         M25
+     {% endif %}
+ 
+-[menu __main __sdcard __cancel]
++[menu __main __cancel]
+ type: command
+ enable: {('virtual_sdcard' in printer) and (printer.print_stats.state == "printing" or printer.print_stats.state == "paused")}
+ name: Cancel printing
+ gcode:
++    M117 Cancel print!!
++    clear_last_file
++    SAVE_VARIABLE VARIABLE=was_interrupted VALUE=False
++    RUN_SHELL_COMMAND CMD=clear_plr
+     {% if 'pause_resume' in printer %}
+         CANCEL_PRINT
+     {% else %}
+@@ -212,103 +246,168 @@ gcode:
+             G90
+         {% endif %}
+     {% endif %}
++    M117 Ready
+ 
+-### menu control ###
+-[menu __main __control]
++### menu prepare ###
++[menu __main __prepare]
+ type: list
+-name: Control
++enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
++name: Prepare
+ 
+-[menu __main __control __home]
++[menu __main __prepare __home]
+ type: command
+-enable: {not printer.idle_timeout.state == "Printing"}
+-name: Home All
++name: Auto Home
+ gcode: G28
+ 
+-[menu __main __control __homez]
++[menu __main __prepare __preheat_pla]
+ type: command
+-enable: {not printer.idle_timeout.state == "Printing"}
+-name: Home Z
+-gcode: G28 Z
++enable: {('extruder' in printer) and ('heater_bed' in printer)}
++name: Preheat PLA
++gcode:
++    M117 Preheat PLA
++    M140 S65
++    M104 S200
+ 
+-[menu __main __control __homexy]
++[menu __main __prepare __preheat_abs]
+ type: command
+-enable: {not printer.idle_timeout.state == "Printing"}
+-name: Home X/Y
+-gcode: G28 X Y
++enable: {('extruder' in printer) and ('heater_bed' in printer)}
++name: Preheat ABS
++gcode:
++    M117 Preheat ABS
++    M140 S80
++    M104 S260
+ 
+-[menu __main __control __z_tilt]
++[menu __main __prepare __cooldown]
+ type: command
+-enable: {not printer.idle_timeout.state == "Printing" and ('z_tilt' in printer)}
+-name: Z Tilt
+-gcode: Z_TILT_ADJUST
++enable: {('extruder' in printer) and ('heater_bed' in printer)}
++name: Cooldown
++gcode:
++    M117 Cooldown
++    M104 S0
++    M140 S0
+ 
+-[menu __main __control __quad_gantry_level]
+-type: command
+-enable: {not printer.idle_timeout.state == "Printing" and ('quad_gantry_level' in printer)}
+-name: Quad Gantry Lvl
+-gcode: QUAD_GANTRY_LEVEL
++### menu filament ###
++[menu __main __prepare __hotend0_target]
++type: input
++enable: {'extruder' in printer}
++name: {"Ex0:%3.0f (%4.0f)" % (menu.input, printer.extruder.temperature)}
++input: {printer.extruder.target}
++input_min: 0
++input_max: {printer.configfile.config.extruder.max_temp}
++input_step: 1
++gcode: M104 T0 S{'%.0f' % menu.input}
+ 
+-[menu __main __control __bed_mesh]
+-type: command
+-enable: {not printer.idle_timeout.state == "Printing" and ('bed_mesh' in printer)}
+-name: Bed Mesh
+-gcode: BED_MESH_CALIBRATE
+ 
+-[menu __main __control __disable]
++[menu __main __levelling __quad_gantry_level]
+ type: command
+-name: Steppers off
++enable: {('quad_gantry_level' in printer)}
++name: Quad Gantry Lvl
+ gcode:
+-    M84
+-    M18
++    M117 Quad Gantry Lvl
++    QUAD_GANTRY_LEVEL
++
++### menu virtual sdcard ###
++[menu __main __sdcard]
++type: vsdlist
++enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
++name: Print
++
++### menu control ###
++[menu __main __control2]
++type: list
++enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
++name: Control
+ 
+-[menu __main __control __fanonoff]
++[menu __main __control2 __hotend0_target]
+ type: input
+-enable: {'fan' in printer}
+-name: Fan: {'ON ' if menu.input else 'OFF'}
+-input: {printer.fan.speed}
++enable: {('extruder' in printer) and ('extruder' in printer.heaters.available_heaters)}
++name: {"Ex0:%3.0f (%4.0f)" % (menu.input, printer.extruder.temperature)}
++input: {printer.extruder.target}
+ input_min: 0
+-input_max: 1
++input_max: {printer.configfile.config.extruder.max_temp}
+ input_step: 1
+-gcode:
+-    M106 S{255 if menu.input else 0}
++gcode: M104 T0 S{'%.0f' % menu.input}
++
++[menu __main __control2 __hotbed_target]
++type: input
++enable: {'heater_bed' in printer}
++name: {"Bed:%3.0f (%4.0f)" % (menu.input, printer.heater_bed.temperature)}
++input: {printer.heater_bed.target}
++input_min: 0
++input_max: {printer.configfile.config.heater_bed.max_temp}
++input_step: 1
++gcode: M140 S{'%.0f' % menu.input}
++
++[menu __main __control2 __chamber_temp]
++type: input
++enable: {'heater_generic chamber_heater' in printer}
++name: {"Cham:%3.0f (%4.0f)" % (menu.input, printer["heater_generic chamber_heater"].temperature)}
++input: {printer["heater_generic chamber_heater"].target}
++input_min: 0
++input_max: 60
++input_step: 1
++gcode: SET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET={'%.0f' % menu.input}
+ 
+-[menu __main __control __fanspeed]
++[menu __main __control2 __temp_fan]
+ type: input
+-enable: {'fan' in printer}
+-name: Fan speed: {'%3d' % (menu.input*100)}%
+-input: {printer.fan.speed}
++name: {"Tfan:%3.0f (%3.0f)" % (menu.input,printer["temperature_fan exhaust_fan"].temperature)}
++input: {printer["temperature_fan exhaust_fan"].target}
++input_min: 0
++input_max: 60
++input_step: 1
++gcode: SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=exhaust_fan TARGET={'%.0f' % menu.input}
++
++[menu __main __control2 __fanspeed]
++type: input
++name: Fan speed: {'%3.0f' % (menu.input*100)}%
++input: {printer["fan_generic fan0"].speed}
+ input_min: 0
+ input_max: 1
+ input_step: 0.01
+ gcode:
+-    M106 S{'%d' % (menu.input*255)}
++    M106 S{'%3.0f' % (menu.input*255)}
++    
++[menu __main __control2 __auxiliaryfanspeed]
++type: input
++name: AuxFan:{'%3.0f' % (menu.input*100)}%
++input: {printer["fan_generic fan2"].speed}
++input_min: 0
++input_max: 1
++input_step: 0.01
++gcode:
++    M106 P2 S{'%3.0f' % (menu.input*255)}
+ 
+-[menu __main __control __caselightonoff]
++[menu __main __control2 __ledonoff]
+ type: input
+-enable: {'output_pin caselight' in printer}
+-name: Lights: {'ON ' if menu.input else 'OFF'}
+-input: {printer['output_pin caselight'].value}
++name: Led: {'ON ' if menu.input else 'OFF'}
++input: {printer['output_pin main_led'].value}
+ input_min: 0
+ input_max: 1
+ input_step: 1
+ gcode:
+-    SET_PIN PIN=caselight VALUE={1 if menu.input else 0}
++    SET_PIN PIN=main_led VALUE={1 if menu.input else 0}
+ 
+-[menu __main __control __caselightpwm]
+-type: input
+-enable: {'output_pin caselight' in printer}
+-name: Lights: {'%3d' % (menu.input*100)}%
+-input: {printer['output_pin caselight'].value}
+-input_min: 0.0
+-input_max: 1.0
+-input_step: 0.01
++### menu control ###
++[menu __main __control]
++type: list
++enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
++name: Move
++
++[menu __main __control __disable]
++type: command
++name: Steppers off
+ gcode:
+-    SET_PIN PIN=caselight VALUE={menu.input}
++    M84
++    M18
++
++[menu __main __control __home]
++type: command
++name: Auto Home
++gcode: G28
+ 
+ ### menu move 10mm ###
+ [menu __main __control __move_10mm]
+ type: list
+-enable: {not printer.idle_timeout.state == "Printing"}
+ name: Move 10mm
+ 
+ [menu __main __control __move_10mm __axis_x]
+@@ -339,11 +438,10 @@ gcode:
+ 
+ [menu __main __control __move_10mm __axis_z]
+ type: input
+-enable: {not printer.idle_timeout.state == "Printing"}
+ name: Move Z:{'%05.1f' % menu.input}
+ input: {printer.gcode_move.gcode_position.z}
+ input_min: 0
+-input_max: {printer.toolhead.axis_maximum.z}
++input_max: {printer.toolhead.axis_maximum.z - 2}
+ input_step: 10.0
+ gcode:
+     SAVE_GCODE_STATE NAME=__move__axis
+@@ -353,7 +451,6 @@ gcode:
+ 
+ [menu __main __control __move_10mm __axis_e]
+ type: input
+-enable: {not printer.idle_timeout.state == "Printing"}
+ name: Move E:{'%+06.1f' % menu.input}
+ input: 0
+ input_min: -{printer.configfile.config.extruder.max_extrude_only_distance|default(50)}
+@@ -368,7 +465,6 @@ gcode:
+ ### menu move 1mm ###
+ [menu __main __control __move_1mm]
+ type: list
+-enable: {not printer.idle_timeout.state == "Printing"}
+ name: Move 1mm
+ 
+ [menu __main __control __move_1mm __axis_x]
+@@ -403,7 +499,7 @@ enable: {not printer.idle_timeout.state == "Printing"}
+ name: Move Z:{'%05.1f' % menu.input}
+ input: {printer.gcode_move.gcode_position.z}
+ input_min: 0
+-input_max: {printer.toolhead.axis_maximum.z}
++input_max: {printer.toolhead.axis_maximum.z - 2}
+ input_step: 1.0
+ gcode:
+     SAVE_GCODE_STATE NAME=__move__axis
+@@ -463,7 +559,7 @@ enable: {not printer.idle_timeout.state == "Printing"}
+ name: Move Z:{'%05.1f' % menu.input}
+ input: {printer.gcode_move.gcode_position.z}
+ input_min: 0
+-input_max: {printer.toolhead.axis_maximum.z}
++input_max: {printer.toolhead.axis_maximum.z - 2}
+ input_step: 0.1
+ gcode:
+     SAVE_GCODE_STATE NAME=__move__axis
+@@ -484,299 +580,151 @@ gcode:
+     M83
+     G1 E{menu.input} F240
+     RESTORE_GCODE_STATE NAME=__move__axis
+-
+-### menu temperature ###
+-[menu __main __temp]
+-type: list
+-name: Temperature
+-
+-[menu __main __temp __hotend0_target]
+-type: input
+-enable: {('extruder' in printer) and ('extruder' in printer.heaters.available_heaters)}
+-name: {"Ex0:%3.0f (%4.0f)" % (menu.input, printer.extruder.temperature)}
+-input: {printer.extruder.target}
+-input_min: 0
+-input_max: {printer.configfile.config.extruder.max_temp}
+-input_step: 1
+-gcode: M104 T0 S{'%.0f' % menu.input}
+-
+-[menu __main __temp __hotend1_target]
+-type: input
+-enable: {('extruder1' in printer) and ('extruder1' in printer.heaters.available_heaters)}
+-name: {"Ex1:%3.0f (%4.0f)" % (menu.input, printer.extruder1.temperature)}
+-input: {printer.extruder1.target}
+-input_min: 0
+-input_max: {printer.configfile.config.extruder1.max_temp}
+-input_step: 1
+-gcode: M104 T1 S{'%.0f' % menu.input}
+-
+-[menu __main __temp __hotbed_target]
+-type: input
+-enable: {'heater_bed' in printer}
+-name: {"Bed:%3.0f (%4.0f)" % (menu.input, printer.heater_bed.temperature)}
+-input: {printer.heater_bed.target}
+-input_min: 0
+-input_max: {printer.configfile.config.heater_bed.max_temp}
+-input_step: 1
+-gcode: M140 S{'%.0f' % menu.input}
+-
+-[menu __main __temp __preheat_pla]
+-type: list
+-name: Preheat PLA
+-
+-[menu __main __temp __preheat_pla __all]
+-type: command
+-enable: {('extruder' in printer) and ('heater_bed' in printer)}
+-name: Preheat all
+-gcode:
+-    M140 S60
+-    M104 S200
+-
+-[menu __main __temp __preheat_pla __hotend]
+-type: command
+-enable: {'extruder' in printer}
+-name: Preheat hotend
+-gcode: M104 S200
+-
+-[menu __main __temp __preheat_pla __hotbed]
+-type: command
+-enable: {'heater_bed' in printer}
+-name: Preheat hotbed
+-gcode: M140 S60
+-
+-[menu __main __temp __preheat_abs]
+-type: list
+-name: Preheat ABS
+-
+-[menu __main __temp __preheat_abs __all]
+-type: command
+-enable: {('extruder' in printer) and ('heater_bed' in printer)}
+-name: Preheat all
+-gcode:
+-    M140 S110
+-    M104 S245
+-
+-[menu __main __temp __preheat_abs __hotend]
+-type: command
+-enable: {'extruder' in printer}
+-name: Preheat hotend
+-gcode: M104 S245
+-
+-[menu __main __temp __preheat_abs __hotbed]
+-type: command
+-enable: {'heater_bed' in printer}
+-name: Preheat hotbed
+-gcode: M140 S110
+-
+-[menu __main __temp __cooldown]
+-type: list
+-name: Cooldown
+-
+-[menu __main __temp __cooldown __all]
+-type: command
+-enable: {('extruder' in printer) and ('heater_bed' in printer)}
+-name: Cooldown all
+-gcode:
+-    M104 S0
+-    M140 S0
+-
+-[menu __main __temp __cooldown __hotend]
+-type: command
+-enable: {'extruder' in printer}
+-name: Cooldown hotend
+-gcode: M104 S0
+-
+-[menu __main __temp __cooldown __hotbed]
+-type: command
+-enable: {'heater_bed' in printer}
+-name: Cooldown hotbed
+-gcode: M140 S0
+-
+-### menu filament ###
+-
++    
++### Filament Change ###
+ [menu __main __filament]
+ type: list
++enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
+ name: Filament
+ 
+-[menu __main __filament __hotend0_target]
+-type: input
+-enable: {'extruder' in printer}
+-name: {"Ex0:%3.0f (%4.0f)" % (menu.input, printer.extruder.temperature)}
+-input: {printer.extruder.target}
+-input_min: 0
+-input_max: {printer.configfile.config.extruder.max_temp}
+-input_step: 1
+-gcode: M104 T0 S{'%.0f' % menu.input}
+-
+-[menu __main __filament __loadf]
+-type: command
+-name: Load Fil. fast
+-gcode:
+-    SAVE_GCODE_STATE NAME=__filament__load
+-    M83
+-    G1 E50 F960
+-    RESTORE_GCODE_STATE NAME=__filament__load
+-
+ [menu __main __filament __loads]
+ type: command
+-name: Load Fil. slow
++name: Load Fil
+ gcode:
+     SAVE_GCODE_STATE NAME=__filament__load
+-    M83
+-    G1 E50 F240
+-    RESTORE_GCODE_STATE NAME=__filament__load
+-
+-[menu __main __filament __unloadf]
+-type: command
+-name: Unload Fil.fast
+-gcode:
+-    SAVE_GCODE_STATE NAME=__filament__load
+-    M83
+-    G1 E-50 F960
++    LOAD_FILAMENT
+     RESTORE_GCODE_STATE NAME=__filament__load
+ 
+ [menu __main __filament __unloads]
+ type: command
+-name: Unload Fil.slow
+-gcode:
+-    SAVE_GCODE_STATE NAME=__filament__load
+-    M83
+-    G1 E-50 F240
+-    RESTORE_GCODE_STATE NAME=__filament__load
+-
+-[menu __main __filament __feed]
+-type: input
+-name: Feed: {'%.1f' % menu.input}
+-input: 5
+-input_step: 0.1
++name: Unload Fil
+ gcode:
+     SAVE_GCODE_STATE NAME=__filament__load
+-    M83
+-    G1 E{'%.1f' % menu.input} F60
++    UNLOAD_FILAMENT
+     RESTORE_GCODE_STATE NAME=__filament__load
+ 
+ ### menu setup ###
+ [menu __main __setup]
+ type: list
+-enable: {not printer.idle_timeout.state == "Printing"}
+-name: Setup
++enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
++name: Advanced
+ 
+-[menu __main __setup __save_config]
++[menu __main __setup __get_ip]
+ type: command
+-name: Save config
+-gcode: SAVE_CONFIG
+-
+-[menu __main __setup __restart]
+-type: list
+-name: Restart
++name: "Show IP"
++gcode:
++    _GET_IP
+ 
+-[menu __main __setup __restart __host_restart]
++[menu __main __setup __eddycalibrate]
+ type: command
+-enable: {not printer.idle_timeout.state == "Printing"}
+-name: Restart host
+-gcode: RESTART
++name: Eddy Calibrate
++gcode: 
++    M117 Eddy Calibrate
++    G28 X
++    G28 Y 
++    Z_OFFSET_CALIBRATION METHOD=force_overlay
++    SAVE_VARIABLE VARIABLE=factory_reset VALUE=True
++    SAVE_CONFIG
+ 
+-[menu __main __setup __restart __firmware_restart]
++[menu __main __setup __resonances]
+ type: command
+-enable: {not printer.idle_timeout.state == "Printing"}
+-name: Restart FW
+-gcode: FIRMWARE_RESTART
++name: Resonances
++gcode: 
++    M117 Input Shaping
++    ACCELEROMETER_QUERY
++    G28
++    SHAPER_CALIBRATE
++    SAVE_CONFIG
++
++[menu __main __setup __timelapse_toggle]
++type: input
++name: Timelapse: {'ON ' if menu.input else 'OFF'}
++input: {printer['gcode_macro TIMELAPSE_TAKE_FRAME'].enable}
++input_min: 0
++input_max: 1
++input_step: 1
++gcode:
++    SET_GCODE_VARIABLE MACRO=TIMELAPSE_TAKE_FRAME VARIABLE=enable VALUE={1 if menu.input else 0}
+ 
+ [menu __main __setup __tuning]
+ type: list
+-name: PID tuning
++name: PID Tuning
++gcode: 
+ 
+-[menu __main __setup __tuning __hotend_pid_tuning]
++[menu __main __setup __tuning __hotendpid]
+ type: command
+-enable: {(not printer.idle_timeout.state == "Printing") and ('extruder' in printer)}
+ name: Tune Hotend PID
+-gcode: PID_CALIBRATE HEATER=extruder TARGET=210 WRITE_FILE=1
++gcode: 
++    M117 Tune Hotend PID
++    PID_CALIBRATE HEATER=extruder TARGET=210 WRITE_FILE=1
++    SAVE_CONFIG
+ 
+-[menu __main __setup __tuning __hotbed_pid_tuning]
++[menu __main __setup __tuning __bedpid]
+ type: command
+-enable: {(not printer.idle_timeout.state == "Printing") and ('heater_bed' in printer)}
+-name: Tune Hotbed PID
+-gcode: PID_CALIBRATE HEATER=heater_bed TARGET=60 WRITE_FILE=1
++name: Tune Bed PID
++gcode: 
++    M117 Tune Bed PID
++    PID_CALIBRATE HEATER=heater_bed TARGET=60 WRITE_FILE=1
++    SAVE_CONFIG
+ 
+-[menu __main __setup __calib]
++[menu __main __setup __ota]
+ type: list
+-name: Calibration
++name: OTA
+ 
+-[menu __main __setup __calib __delta_calib_auto]
++[menu __main __setup __ota __confirm]
+ type: command
+-enable: {(not printer.idle_timeout.state == "Printing") and ('delta_calibrate' in printer)}
+-name: Delta cal. auto
++name: Confirm
+ gcode:
+-    G28
+-    DELTA_CALIBRATE
++    _OTA
+ 
+-[menu __main __setup __calib __delta_calib_man]
++[menu __main __setup __obico_link]
+ type: list
+-enable: {(not printer.idle_timeout.state == "Printing") and ('delta_calibrate' in printer)}
+-name: Delta cal. man
++name: {'Re-link' if printer["gcode_macro OBICO_LINK_STATUS"].is_linked else 'Link'} Obico
+ 
+-[menu __main __setup __calib __bedprobe]
++[menu __main __setup __obico_link _install_obico]
+ type: command
+-enable: {(not printer.idle_timeout.state == "Printing") and ('probe' in printer)}
+-name: Bed probe
+-gcode: PROBE
++enable: { not printer["gcode_macro OBICO_LINK_STATUS"].is_linked and printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode == ''}
++name: Install Obico
++gcode:
++    _OBICO_CODE_GET
+ 
+-[menu __main __setup __calib __delta_calib_man __start]
++[menu __main __setup __obico_link _one_time_passcode]
+ type: command
+-name: Start probing
++enable: { not printer["gcode_macro OBICO_LINK_STATUS"].is_linked and printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode != ''}
++name: Code: {printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode}
+ gcode:
+-    G28
+-    DELTA_CALIBRATE METHOD=manual
++    M117 Code: {printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode}
+ 
+-[menu __main __setup __calib __delta_calib_man __move_z]
+-type: input
+-name: Move Z: {'%03.2f' % menu.input}
+-input: {printer.gcode_move.gcode_position.z}
+-input_step: 1
+-realtime: True
+-gcode:
+-    {%- if menu.event == 'change' -%}
+-        G1 Z{'%.2f' % menu.input}
+-    {%- elif menu.event == 'long_click' -%}
+-        G1 Z{'%.2f' % menu.input}
+-        SAVE_GCODE_STATE NAME=__move__axis
+-        G91
+-        G1 Z2
+-        G1 Z-2
+-        RESTORE_GCODE_STATE NAME=__move__axis
+-    {%- endif -%}
+-
+-[menu __main __setup __calib __delta_calib_man __test_z]
+-type: input
+-name: Test Z: {['++','+','+.01','+.05','+.1','+.5','-.5','-.1','-.05','-.01','-','--'][menu.input|int]}
+-input: 6
+-input_min: 0
+-input_max: 11
+-input_step: 1
++[menu __main __setup __obico_link _relink]
++type: command
++enable: {printer["gcode_macro OBICO_LINK_STATUS"].is_linked}
++name: Confirm Re-link
+ gcode:
+-    {%- if menu.event == 'long_click' -%}
+-        TESTZ Z={['++','+','+.01','+.05','+.1','+.5','-.5','-.1','-.05','-.01','-','--'][menu.input|int]}
+-    {%- endif -%}
++    _OBICO_RELINK
++
++[menu __main __info]
++type: list
++enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
++name: Information
+ 
+-[menu __main __setup __calib __delta_calib_man __accept]
++[menu __main __info __version]
+ type: command
+-name: Accept
+-gcode: ACCEPT
++name: 1.4.7
++gcode:
+ 
+-[menu __main __setup __calib __delta_calib_man __abort]
++[menu __main __info __time]
+ type: command
+-name: Abort
+-gcode: ABORT
++name: 2025-5-20
++gcode:
+ 
+-[menu __main __setup __dump]
++[menu __main __info __factory]
++type: list
++name: Factory resets
++
++[menu __main __info __factory __confirm]
+ type: command
+-name: Dump parameters
++name: Confirm
+ gcode:
+-   {% for name1 in printer %}
+-      {% for name2 in printer[name1] %}
+-         { action_respond_info("printer['%s'].%s = %s"
+-                               % (name1, name2, printer[name1][name2])) }
+-      {% else %}
+-         { action_respond_info("printer['%s'] = %s" % (name1, printer[name1])) }
+-      {% endfor %}
+-   {% endfor %}
++    SAVE_VARIABLE VARIABLE=factory_reset VALUE=False 
++    RUN_SHELL_COMMAND CMD=FACTORY_RESETS
++
+diff --git a/klippy/extras/display/menu.py b/klippy/extras/display/menu.py
+index e7723a7e3..22f1a37d6 100644
+--- a/klippy/extras/display/menu.py
++++ b/klippy/extras/display/menu.py
+@@ -7,7 +7,7 @@
+ import os, logging, ast, re
+ from string import Template
+ from . import menu_keys
+-
++import configparser
+ 
+ class sentinel:
+     pass
+@@ -170,9 +170,9 @@ class MenuElement(object):
+ 
+     def get_ns(self, name='.'):
+         name = str(name).strip()
+-        if name.startswith('..'):
++        if name.startswith('Back'):
+             name = ' '.join(
+-                [(' '.join(str(self._ns).split(' ')[:-1])), name[2:]])
++                [(' '.join(str(self._ns).split(' ')[:-1])), name[4:]])
+         elif name.startswith('.'):
+             name = ' '.join([str(self._ns), name[1:]])
+         return name.strip()
+@@ -532,6 +532,9 @@ class MenuInput(MenuCommand):
+         self._input_value = None
+         self._input_min = self._eval_min(context)
+         self._input_max = self._eval_max(context)
++        rname = self.render_name()
++        if rname.startswith('Ex0') or rname.startswith('Bed'):
++            self._input_max = self._input_max - 5.0
+         self._input_value = min(self._input_max, max(
+             self._input_min, self._eval_value(context)))
+         self._value_changed()
+@@ -587,7 +590,7 @@ class MenuList(MenuContainer):
+             el.manager.back()
+         # create back item
+         self._itemBack = self.manager.menuitem_from(
+-            'command', name='..', gcode=_cb)
++            'command', name='Back', gcode=_cb)
+ 
+     def _names_aslist(self):
+         return self.manager.lookup_children(self.get_ns())
+@@ -668,9 +671,10 @@ class MenuVSDList(MenuList):
+         sdcard = self.manager.printer.lookup_object('virtual_sdcard', None)
+         if sdcard is not None:
+             files = sdcard.get_file_list()
++            files = [(r_path, size) for (r_path, size) in files if not r_path.startswith('.')]
+             for fname, fsize in files:
+-                self.insert_item(self.manager.menuitem_from(
+-                    'command', name=repr(fname), gcode='M23 /%s' % str(fname)))
++                self.insert_item(self.manager.menuitem_from(        #\n PRINT_START \nsave_last_file
++                    'command', name=repr(fname), gcode='M23 /%s\nM117 %s\nM24' % (str(fname), fname))) 
+ 
+ 
+ menu_items = {
+@@ -698,7 +702,17 @@ class MenuManager:
+         self.gcode_queue = []
+         self.context = {}
+         self.root = None
+-        self._root = config.get('menu_root', '__main')
++        plr_bool = self.read_varibles_cfg_value('was_interrupted')
++        reset = self.read_varibles_cfg_value('factory_reset')
++        menu_title = ''
++        self.config = config
++        if plr_bool == "True":
++            menu_title = '__resume'
++        elif reset == "False":
++           menu_title = '__reset' 
++        else:
++            menu_title = '__main'
++        self._root = config.get('menu_root', menu_title)
+         self.cols, self.rows = self.display.get_dimensions()
+         self.timeout = config.getint('menu_timeout', 0)
+         self.timer = 0
+@@ -710,6 +724,7 @@ class MenuManager:
+         # register itself for printer callbacks
+         self.printer.add_object('menu', self)
+         self.printer.register_event_handler("klippy:ready", self.handle_ready)
++        #self.printer.register_event_handler("gcode:belt", self.belt_test)
+         # register for key events
+         menu_keys.MenuKeys(config, self.key_event)
+         # Load local config file in same directory as current module
+@@ -720,9 +735,20 @@ class MenuManager:
+         self.root = self.lookup_menuitem(self._root)
+         # send init event
+         self.send_event('init', self)
+-
++        self.gcode.register_command('CHANG_ROOT_MAIN', self.cmd_CHANG_ROOT_MAIN,
++                                    desc="Chang Root Main")
++                                    
++    def cmd_CHANG_ROOT_MAIN(self, gcmd):
++        self.changRootMain()
++        
+     def handle_ready(self):
+         # start timer
++        plr_bool = self.read_varibles_cfg_value('was_interrupted')
++        reset = self.read_varibles_cfg_value('factory_reset')
++        if plr_bool == "True":
++            self.gcode.run_script_from_command('M117 Power Recovery')
++        if reset == "False":
++            self.gcode.run_script_from_command('M117 Factory Settings')
+         reactor = self.printer.get_reactor()
+         reactor.register_timer(self.timer_event, reactor.NOW)
+ 
+@@ -937,6 +963,25 @@ class MenuManager:
+             elif isinstance(current, MenuCommand):
+                 current.run_script('gcode', event=event)
+                 current.run_script(event)
++                name = current.render_name(True)
++                if name == "Cancel" or name == "Resume" or name == "Skip Calibrate":
++                    self.back()
++                    self.changRootMain()
++                if name in ["Cancel printing", "Resume printing"]:
++                    self.back()
++                if name in ["Belt test", "Calibrate Zoffset", "Cooldown", "Start printing", "Show IP", "Eddy Calibrate", "Quad Gantry Lvl", "Resonances", "Preheat PLA", "Preheat ABS", "Calibration", "PID Tuning"]:
++                    self.back()
++                    self.back()
++                    if name == "Calibrate Zoffset":
++                        self.printer.send_event("klippy:start_print")
++                        self.gcode.run_script("_Delay_Calibrate")
++                if name in ["Load Fil", "Unload Fil", "Tune Hotend PID", "Tune Hotbed PID", "Confirm", "Install Obico"]:
++                    self.back()
++                    self.back()
++                    self.back()
++                if name.endswith(".gcode"):
++                    self.back()
++                    self.back()
+             else:
+                 # current is None, no selection. passthru to container
+                 container.run_script(event)
+@@ -973,7 +1018,7 @@ class MenuManager:
+                 "previous menuitem declaration" % (name,))
+         self.menuitems[name] = item
+         if isinstance(item, MenuElement):
+-            parent = item.get_ns('..')
++            parent = item.get_ns('Back')
+             if parent and not existing_item:
+                 if item.index is not None:
+                     self.children.setdefault(parent, []).insert(
+@@ -1018,6 +1063,25 @@ class MenuManager:
+             item = menu_items[type](self, cfg)
+             self.add_menuitem(item.get_ns(), item)
+ 
++    def read_varibles_cfg_value(self, option):
++        _config = configparser.ConfigParser()
++        _config.read('/home/sovol/printer_data/config/saved_variables.cfg')
++        _value = _config.get('Variables', option)
++        return _value
++
++    def modify_cfg_value(self, option, new_value):
++        _config = configparser.ConfigParser()
++        _config.read('/home/sovol/printer_data/config/saved_variables.cfg')
++        _config.set('Variables', option, new_value)
++        with open('/home/sovol/printer_data/config/saved_variables.cfg', 'w') as file:
++            _config.write(file)
++
++    def changRootMain(self):
++        self._root = self.config.get('menu_root', '__main')
++        self.load_config(os.path.dirname(__file__), 'menu.cfg')
++        self.load_menuitems(self.config)
++        self.root = self.lookup_menuitem(self._root)
++
+     def _click_callback(self, eventtime, event):
+         if self.is_running():
+             self.press(event)
+@@ -1027,16 +1091,17 @@ class MenuManager:
+ 
+     def key_event(self, key, eventtime):
+         if key == 'click':
++            #self.gcode.run_script("BEEP")
+             self._click_callback(eventtime, key)
+         elif key == 'long_click':
+             self._click_callback(eventtime, key)
+-        elif key == 'up':
++        elif key == 'down':
+             self.up(False)
+-        elif key == 'fast_up':
++        elif key == 'fast_down':
+             self.up(True)
+-        elif key == 'down':
++        elif key == 'up':
+             self.down(False)
+-        elif key == 'fast_down':
++        elif key == 'fast_up':
+             self.down(True)
+         elif key == 'back':
+             self.back()
+diff --git a/src/Makefile b/src/Makefile
+index 86c7407e6..02bd5a1c7 100644
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -1,6 +1,6 @@
+ # Main code build rules
+ 
+-src-y += sched.c command.c basecmd.c debugcmds.c
++src-y += sched.c command.c basecmd.c debugcmds.c ws2811.c UC1701.c fonts.c
+ src-$(CONFIG_HAVE_GPIO) += initial_pins.c gpiocmds.c stepper.c endstop.c \
+     trsync.c
+ src-$(CONFIG_HAVE_GPIO_ADC) += adccmds.c
+diff --git a/src/UC1701.c b/src/UC1701.c
+new file mode 100644
+index 000000000..93ebfa74a
+--- /dev/null
++++ b/src/UC1701.c
+@@ -0,0 +1,381 @@
++   
++//**************************************UC1701 96*49 DOTS *************************
++#include "UC1701.h"
++#include "stm32/internal.h"
++#include "stm32/gpio.h"
++#include "generic/armcm_timer.h" 
++#include "sched.h"
++#include "command.h"
++#include <string.h>
++#include <stdlib.h>
++
++#define unchar  unsigned char
++#define unint   unsigned int 
++
++extern unsigned char ucSmallFont[];
++static int iScreenOffset; // current write offset of screen data
++extern char end;
++
++typedef enum
++{
++	FONT_NORMAL=0,
++	FONT_BIG,
++	FONT_SMALL
++} FONTSIZE;
++//--------------------------------------------------------- 4��SPI�ӿ� ����
++									  
++/*#define  RSTB	PDout(15)   //PD15  reset
++#define	 SCL	PDout(13)	 //PD13
++#define  SDI  PDout(11)  //PD11
++#define  RS   PDout(9)   //PD9    D/C
++#define  CS0  PBout(15)    //PB15   
++	gpio_peripheral(GPIO('A', 10), GPIO_OUTPUT, 0);  //CS PA10
++	gpio_peripheral(GPIO('A', 9), GPIO_OUTPUT, 0);	 //A0 PA9
++	gpio_peripheral(GPIO('C', 11), GPIO_OUTPUT, 0);  //RST PC11
++	gpio_peripheral(GPIO('B', 15), GPIO_OUTPUT, 0);  //MOSI PB15
++	gpio_peripheral(GPIO('B', 13), GPIO_OUTPUT, 0);  //SCLK  PB13
++*/
++
++#define RSTB_H gpio_out_setup(GPIO('C', 11), 1);
++#define RSTB_L gpio_out_setup(GPIO('C', 11), 0);
++#define CS0_H  gpio_out_setup(GPIO('A', 10), 1);
++#define CS0_L  gpio_out_setup(GPIO('A', 10), 0);
++#define RS_H   gpio_out_setup(GPIO('A', 9), 1);
++#define RS_L   gpio_out_setup(GPIO('A', 9), 0);
++#define SDI_H  gpio_out_setup(GPIO('B', 15), 1);
++#define SDI_L  gpio_out_setup(GPIO('B', 15), 0);
++#define SCL_H  gpio_out_setup(GPIO('B', 13), 1);
++#define SCL_L  gpio_out_setup(GPIO('B', 13), 0);
++
++unchar graphic1[]=
++{
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xE0,0xF0,0xF8,0xF8,0x78,0x78,0x78,0x78,0x78,0x78,0x78,0x78,0x78,0x78,0x78,0x78,0x00,0x80,0xC0,0xE0,0xF0,0xF8,0xF8,0x78,0x78,0x00,0x00,0x78,0x78,0xF8,
++0xF8,0xF0,0xE0,0xC0,0x80,0x18,0x78,0xF8,0xF8,0xF8,0xE0,0x80,0x00,0x00,0x00,0x00,0x00,0x80,0xE0,0xF8,0xF8,0xF8,0x78,0x18,0x80,0xC0,0xE0,0xF0,0xF8,0xF8,0x78,0x78,0x00,0x00,0x78,0x78,0xF8,0xF8,0xF0,0xE0,0xC0,0x80,0x00,0xF8,0xF8,0xF8,0xF8,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,0x0F,0x1F,0x1F,0x1E,0x1E,0x1E,0x1E,0x1E,0x1E,0x1E,0x1E,0xFE,0xFE,0xFC,0xF8,0x00,0xFF,0xFF,0xFF,0xFF,0xC1,
++0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x80,0xC1,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x01,0x07,0x1F,0x7F,0xFF,0xFE,0xF8,0xE0,0xF8,0xFE,0xFF,0x7F,0x1F,0x07,0x01,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xC1,0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x80,0xC1,0xFF,0xFF,0xFF,0xFF,0x00,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,
++0x07,0x03,0x00,0x00,0x01,0x03,0x07,0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x0F,0x0F,0x0F,0x0F,0x07,0x03,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x07,0x0F,0x0F,0x0F,0x07,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x03,0x07,0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x0F,0x0F,0x0F,0x0F,0x07,0x03,0x01,0x00,0x00,0x03,
++0x07,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xE0,0xF0,0xB0,0xB0,0xB0,0x30,0x00,0xF0,0xF0,0x00,0x00,0xF0,
++0xF0,0x00,0xE0,0xF0,0xB0,0xB0,0xB0,0x30,0x00,0x60,0xFC,0xFC,0x60,0x60,0x00,0xE0,0xF0,0xB0,0xB0,0xF0,0xE0,0x00,0xE0,0xF0,0x30,0x70,0xE0,0xE0,0x70,0x30,0xF0,0xE0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFE,0xFE,0x30,0x30,0x30,0xF0,0xE0,0x00,0xE0,0xF0,0x30,0x30,0x30,0xF0,0xE0,0x00,0xE0,0xF0,0x30,0x30,
++0x30,0xF0,0xE0,0x00,0x60,0xFC,0xFC,0x60,0x60,0x00,0xEC,0xEC,0x00,0xE0,0xF0,0x30,0x30,0xF0,0xE0,0x00,0xE0,0xF0,0x30,0x30,0x30,0xF0,0xE0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0C,0x0D,0x0D,0x0D,
++0x0F,0x07,0x00,0x03,0x47,0x66,0x36,0x1F,0x0F,0x00,0x0C,0x0D,0x0D,0x0D,0x0F,0x07,0x00,0x00,0x07,0x0F,0x0C,0x0C,0x00,0x07,0x0F,0x0D,0x0D,0x0D,0x0D,0x00,0x0F,0x0F,0x00,0x00,0x0F,0x0F,0x00,0x00,0x0F,0x0F,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0F,0x0F,0x0C,0x0C,0x0C,0x0F,0x07,0x00,0x07,0x0F,0x0C,0x0C,
++0x0C,0x0F,0x07,0x00,0x07,0x0F,0x0C,0x0C,0x0C,0x0F,0x07,0x00,0x00,0x07,0x0F,0x0C,0x0C,0x00,0x0F,0x0F,0x00,0x0F,0x0F,0x00,0x00,0x0F,0x0F,0x00,0x33,0x77,0x66,0x66,0x66,0x7F,0x3F,0x00,0x00,0x0C,0x0C,0x00,0x00,0x0C,0x0C,0x00,0x00,0x0C,0x0C,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00
++};
++
++unchar erroMessage[]=
++{
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80,0x80,0x80,0x80,0x80,0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80,0x80,0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80,0x80,0x80,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xC0,0xC0,0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xC0,0xC0,0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0x10,0x10,0x1F,0x1F,0x00,0xFC,0xFC,0xFC,0x0C,0x04,0x04,0xFD,0xFD,0xFD,0x00,0xFC,0xFC,0xFC,0x0C,0x04,0xFC,0xFC,0xFC,0x04,0xFF,0xFF,0xFF,0x04,0xFC,0xFC,0xFC,0x24,0x24,0x3C,0x3C,0x38,0xFC,0xFC,0xFC,0x0C,0x04,0x04,
++0x00,0x00,0xFD,0xFD,0xFD,0x00,0x18,0x3C,0x3C,0xE4,0xE4,0xC4,0x00,0x00,0x00,0x00,0x18,0x3C,0x3C,0xE4,0xE4,0xC4,0xFF,0xFF,0xFF,0x0C,0x04,0xFC,0xFC,0xF8,0x7C,0xFC,0xFC,0x80,0x80,0xFC,0xFC,0xFC,0x04,0xFF,0xFF,0xFF,0x04,0xFC,0xFC,0xFC,0x04,0x8C,0xFF,0xFF,0xFF,0xF8,0xFC,0xFC,0x04,0x04,0x8C,0xFC,0xF8,0x00,
++0x1C,0xFC,0xFC,0xE0,0xFC,0x7C,0xFC,0xF0,0xF0,0xFC,0x3C,0xFC,0xFC,0xFC,0x0C,0x04,0xFC,0xFC,0xF8,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x01,0x00,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,
++0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x01,
++0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x00,0x00,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80,0x80,0x80,0x80,0x80,0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xC0,0xC0,0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x80,0x80,0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0x10,0x30,0xFF,0xFF,0xCF,0x00,0xF8,0xFC,0xFC,0x24,0x24,0x3C,0x3C,0x38,0x18,0x3C,0x3C,0xE4,
++0xE4,0xC4,0x04,0xFF,0xFF,0xFF,0x04,0xCC,0xEC,0xEC,0x24,0xAC,0xFC,0xFC,0xFC,0xFC,0xFC,0x0C,0x04,0x04,0x04,0xFF,0xFF,0xFF,0x04,0x04,0x00,0x04,0x04,0xFF,0xFF,0xFF,0x04,0xFF,0xFF,0xFF,0x0C,0x04,0xFC,0xFC,0xF8,0xF8,0xFC,0xFC,0x24,0x24,0x3C,0x3C,0x38,0x00,0x00,0x00,0x00,0xFC,0xFC,0xFC,0x8C,0x04,0xCC,0xFC,
++0xF8,0xFC,0xFC,0xFC,0x0C,0x04,0x04,0xFD,0xFD,0xFD,0x00,0xFC,0xFC,0xFC,0x0C,0x04,0xFC,0xFC,0xFC,0x04,0xFF,0xFF,0xFF,0x04,0xFC,0xFC,0xFC,0x24,0x24,0x3C,0x3C,0x38,0xFC,0xFC,0xFC,0x0C,0x04,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,
++0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,
++0x0F,0x0F,0x0F,0x01,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x00,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x00,0x00,0x01,0x01,0x01,0x00,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++0x00,0x00,0x00,0x00
++};
++
++
++void Init_S6B33B(void);
++void Write_S6B33B_COM(unchar COMDADA_4SPI);
++void Write_S6B33B_DISPLAY_DATA_serial_4SPI(unchar DADA_4SPI);
++void delay_ms(uint32_t value);
++void HDReset(void);
++//void Keypress(void);
++void clear_screen(unchar xx);
++void Display_pic1(unchar graphic[]);
++void Display_fangkuang(void);
++
++void delay_ms(uint32_t value)
++{
++	udelay(1000 * value);
++}
++
++void io_Init(void)
++{
++	gpio_peripheral(GPIO('A', 10), GPIO_OUTPUT, 0);  //CS PA10
++	gpio_peripheral(GPIO('A', 9), GPIO_OUTPUT, 0);	 //A0 PA9
++	gpio_peripheral(GPIO('C', 11), GPIO_OUTPUT, 0);  //RST PC11
++	gpio_peripheral(GPIO('B', 15), GPIO_OUTPUT, 0);  //MOSI PB15
++	gpio_peripheral(GPIO('B', 13), GPIO_OUTPUT, 0);  //SCLK  PB13
++}
++
++void start_lcd(void)
++{	
++	io_Init();
++	Init_S6B33B();
++	delay_ms(100);
++	clear_screen(0x00);
++	Display_pic1(graphic1);
++}
++
++//--------------------------------------------------------------------------
++
++void Init_S6B33B(void)
++{
++	HDReset();
++	delay_ms(100);
++
++	Write_S6B33B_COM(0xe2);
++	Write_S6B33B_COM(0x40);
++	Write_S6B33B_COM(0xa0);
++	Write_S6B33B_COM(0xc8);
++	Write_S6B33B_COM(0xa2);
++	Write_S6B33B_COM(0x2c);
++	Write_S6B33B_COM(0x2e);
++	Write_S6B33B_COM(0x2f);
++	
++	Write_S6B33B_COM(0xf8);
++	Write_S6B33B_COM(0x00);
++	
++	Write_S6B33B_COM(0x23);
++	Write_S6B33B_COM(0x81);
++	Write_S6B33B_COM(0x36);
++	Write_S6B33B_COM(0xac);
++	Write_S6B33B_COM(0x00);
++	Write_S6B33B_COM(0xa6);
++	Write_S6B33B_COM(0xaf);
++	Write_S6B33B_COM(0xa5);
++	Write_S6B33B_COM(0xa4);
++}
++
++
++void clear_screen(unchar xx)
++{
++unchar i,j;
++for(i=0;i<9;i++)
++	{
++		CS0_L;
++		Write_S6B33B_COM(0xb0+i);
++	    Write_S6B33B_COM(0x10);
++		Write_S6B33B_COM(0x00);
++		for(j=0;j<132;j++)
++		{
++			Write_S6B33B_DISPLAY_DATA_serial_4SPI(xx);
++		}
++	 }
++}
++
++void Display_pic1(unchar graphic[])
++{
++	unint i,j,adressd=0;
++
++	for(i=0;i<8;i++)
++	{
++		CS0_L;
++		Write_S6B33B_COM(0xb0+i);
++	    Write_S6B33B_COM(0x10);
++		Write_S6B33B_COM(0x00);
++		for(j=0;j<128;j++)
++		{
++			Write_S6B33B_DISPLAY_DATA_serial_4SPI(graphic[adressd]);
++			adressd++;
++		}
++	}
++} 
++void Display_fangkuang(void)
++{
++	unint i,j;
++	for(i=0;i<5;i++)
++	{
++		CS0_L;
++		Write_S6B33B_COM(0xb0+i);
++	    Write_S6B33B_COM(0x10);
++		Write_S6B33B_COM(0x00);
++		Write_S6B33B_DISPLAY_DATA_serial_4SPI(0xff);
++		for(j=0;j<94;j++)
++		{
++			Write_S6B33B_DISPLAY_DATA_serial_4SPI(0x00);
++		}
++		Write_S6B33B_DISPLAY_DATA_serial_4SPI(0xff);
++	 }
++
++		CS0_L;
++		Write_S6B33B_COM(0xb5);
++	    Write_S6B33B_COM(0x10);
++		Write_S6B33B_COM(0x00);
++		Write_S6B33B_DISPLAY_DATA_serial_4SPI(0xff);
++		for(j=0;j<94;j++)
++		{
++			Write_S6B33B_DISPLAY_DATA_serial_4SPI(0x80);
++		}
++		Write_S6B33B_DISPLAY_DATA_serial_4SPI(0xff);
++
++		CS0_L;
++		Write_S6B33B_COM(0xb8);	//set page
++	    Write_S6B33B_COM(0x10);	//set address LSB
++		Write_S6B33B_COM(0x00);	//set address HSB
++
++		for(j=0;j<96;j++)
++		{
++			Write_S6B33B_DISPLAY_DATA_serial_4SPI(0x01);
++		}
++	
++}
++//***************************************************************************SPI4
++void Write_S6B33B_COM(unchar COMDADA_4SPI)
++{
++	unchar bit8;
++	RS_L;
++	CS0_L;
++	for(bit8=0;bit8<8;bit8++)
++	{
++		SCL_L;
++		if((COMDADA_4SPI&0x80)==0x80) {
++			SDI_H;
++		} else {
++			SDI_L;
++		}
++//		SCL=0;
++		SCL_H;
++		COMDADA_4SPI=(COMDADA_4SPI<<1);
++
++	}
++  //  CS1=1;
++			
++}
++
++void Write_S6B33B_DISPLAY_DATA_serial_4SPI(unchar DADA_4SPI)
++{   
++	unchar bit8;
++	RS_H;
++	CS0_L;				
++
++	for(bit8=0;bit8<8;bit8++)
++	{
++		SCL_L;
++		if((DADA_4SPI&0x80)==0x80) {
++			SDI_H;
++		} else {
++			SDI_L;
++		}
++		SCL_H;
++		DADA_4SPI=(DADA_4SPI<<1);
++
++	}
++//	CS1=1;
++}
++
++/* -------------------------------------------  */
++// Send commands to position the "cursor" to the given
++// row and column
++void uc1701WriteCommand(unchar c)
++{
++	Write_S6B33B_COM(c);
++}
++
++static void uc1701SetPosition(int x, int y)
++{
++	uc1701WriteCommand(0xb0 | y); // set Y
++	uc1701WriteCommand(0x10 | (x >> 4)); // set X (high MSB)
++	uc1701WriteCommand(0x00 | (x & 0xf)); // set X (low MSB)
++	iScreenOffset = (y*128)+x;
++}
++
++// Write a block of pixel data to the LCD
++// Length can be anything from 1 to 504 (whole display)
++static void uc1701WriteDataBlock(unsigned char *ucBuf, int iLen)
++{
++
++	RS_H;
++	// AIOWriteSPI(file_spi, ucBuf, iLen);
++	for(int j=0;j<iLen;j++)
++	{
++		Write_S6B33B_DISPLAY_DATA_serial_4SPI(ucBuf[j]);
++	}
++	// Keep a copy in local buffer
++	// memcpy(&ucScreen[iScreenOffset], ucBuf, iLen);
++	iScreenOffset += iLen;
++}
++
++// Draw a string of small (8x8) or large (16x24) characters
++// At the given col+row
++int uc1701WriteString(int x, int y, char *szMsg, int iSize)
++{
++int i, iLen;
++unsigned char *s;
++
++	iLen = strlen(szMsg);
++	if (iSize == FONT_BIG) // draw 16x32 font
++	{
++		if ((iLen*16)+x > 128) iLen = (128-x)/16;
++		if (iLen < 0) return -1;
++		for (i=0; i<iLen; i++)
++		{
++			// s = &ucFont[9728 + (unsigned char)szMsg[i]*64];
++			// uc1701SetPosition(x+(i*16), y);
++			// uc1701WriteDataBlock(s, 16);
++			// uc1701SetPosition(x+(i*16), y+1);
++			// uc1701WriteDataBlock(s+16, 16);	
++			// uc1701SetPosition(x+(i*16), y+2);
++			// uc1701WriteDataBlock(s+32, 16);	
++			// uc1701SetPosition(x+(i*16), y+3);
++			// uc1701WriteDataBlock(s+48, 16);
++		}
++	}
++	else if (iSize == FONT_NORMAL) // draw 8x8 font
++	{
++		uc1701SetPosition(x, y);
++		if ((8*iLen) + x > 128) iLen = (128 - x)/8; // can't display it all
++		if (iLen < 0)return -1;
++
++		for (i=0; i<iLen; i++)
++		{
++			// s = &ucFont[(unsigned char)szMsg[i] * 8];
++			// uc1701WriteDataBlock(s, 8); // write character pattern
++		}	
++	}
++	else // small
++	{
++		uc1701SetPosition(x, y);
++		if ((6*iLen) + x > 128) iLen = (128 - x)/6;
++		if (iLen < 0) return -1;
++		for (i=0; i<iLen; i++)
++		{
++			s = &ucSmallFont[(unsigned char)szMsg[i]*6];
++			uc1701WriteDataBlock(s, 6);
++		}
++	}
++	return 0;
++} /* uc1701WriteString() */
++
++void HDReset(void)
++{
++	RSTB_L;
++	delay_ms(2);
++	RSTB_H;
++	delay_ms(4);
++}   	
++
++void uc1701_shutdown(int reason)
++{
++	char buf[20] = "error code: ";
++	char code[10] = {0};
++	io_Init();
++	Init_S6B33B();
++	delay_ms(10);
++	clear_screen(0x00);
++	itoa(reason, code, 10);
++	strcat(buf, code);
++	uc1701WriteString(2, 1, "Printer is shutdown", FONT_SMALL);
++	uc1701WriteString(2, 3, "Restart the printer", FONT_SMALL);
++	uc1701WriteString(2, 5, buf, FONT_SMALL);
++}
++
++//DECL_SHUTDOWN(uc1701_shutdown);
+\ No newline at end of file
+diff --git a/src/UC1701.h b/src/UC1701.h
+new file mode 100644
+index 000000000..65fd1553e
+--- /dev/null
++++ b/src/UC1701.h
+@@ -0,0 +1,10 @@
++#ifndef __UC1701_H
++#define __UC1701_H	 
++
++//#include "stm32f10x.h"
++
++//void LED_Init(void);//��ʼ��
++void start_lcd(void);
++void uc1701_shutdown(int reason);
++		 				    
++#endif
+\ No newline at end of file
+diff --git a/src/fonts.c b/src/fonts.c
+new file mode 100644
+index 000000000..4a4f19363
+--- /dev/null
++++ b/src/fonts.c
+@@ -0,0 +1,50 @@
++
++// 5x7 font (in 6x8 cell)
++unsigned char ucSmallFont[] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x3e,0x45,0x51,0x45,0x3e,0x00,0x3e,0x6b,0x6f,
++	0x6b,0x3e,0x00,0x1c,0x3e,0x7c,0x3e,0x1c,0x00,0x18,0x3c,0x7e,0x3c,0x18,0x00,0x30,
++	0x36,0x7f,0x36,0x30,0x00,0x18,0x5c,0x7e,0x5c,0x18,0x00,0x00,0x18,0x18,0x00,0x00,
++	0x00,0xff,0xe7,0xe7,0xff,0xff,0x00,0x3c,0x24,0x24,0x3c,0x00,0x00,0xc3,0xdb,0xdb,
++	0xc3,0xff,0x00,0x30,0x48,0x4a,0x36,0x0e,0x00,0x06,0x29,0x79,0x29,0x06,0x00,0x60,
++	0x70,0x3f,0x02,0x04,0x00,0x60,0x7e,0x0a,0x35,0x3f,0x00,0x2a,0x1c,0x36,0x1c,0x2a,
++	0x00,0x00,0x7f,0x3e,0x1c,0x08,0x00,0x08,0x1c,0x3e,0x7f,0x00,0x00,0x14,0x36,0x7f,
++	0x36,0x14,0x00,0x00,0x5f,0x00,0x5f,0x00,0x00,0x06,0x09,0x7f,0x01,0x7f,0x00,0x22,
++	0x4d,0x55,0x59,0x22,0x00,0x60,0x60,0x60,0x60,0x00,0x00,0x14,0xb6,0xff,0xb6,0x14,
++	0x00,0x04,0x06,0x7f,0x06,0x04,0x00,0x10,0x30,0x7f,0x30,0x10,0x00,0x08,0x08,0x3e,
++	0x1c,0x08,0x00,0x08,0x1c,0x3e,0x08,0x08,0x00,0x78,0x40,0x40,0x40,0x40,0x00,0x08,
++	0x3e,0x08,0x3e,0x08,0x00,0x30,0x3c,0x3f,0x3c,0x30,0x00,0x03,0x0f,0x3f,0x0f,0x03,
++	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x06,0x5f,0x06,0x00,0x00,0x07,0x03,0x00,
++	0x07,0x03,0x00,0x24,0x7e,0x24,0x7e,0x24,0x00,0x24,0x2b,0x6a,0x12,0x00,0x00,0x63,
++	0x13,0x08,0x64,0x63,0x00,0x36,0x49,0x56,0x20,0x50,0x00,0x00,0x07,0x03,0x00,0x00,
++	0x00,0x00,0x3e,0x41,0x00,0x00,0x00,0x00,0x41,0x3e,0x00,0x00,0x00,0x08,0x3e,0x1c,
++	0x3e,0x08,0x00,0x08,0x08,0x3e,0x08,0x08,0x00,0x00,0xe0,0x60,0x00,0x00,0x00,0x08,
++	0x08,0x08,0x08,0x08,0x00,0x00,0x60,0x60,0x00,0x00,0x00,0x20,0x10,0x08,0x04,0x02,
++	0x00,0x3e,0x51,0x49,0x45,0x3e,0x00,0x00,0x42,0x7f,0x40,0x00,0x00,0x62,0x51,0x49,
++	0x49,0x46,0x00,0x22,0x49,0x49,0x49,0x36,0x00,0x18,0x14,0x12,0x7f,0x10,0x00,0x2f,
++	0x49,0x49,0x49,0x31,0x00,0x3c,0x4a,0x49,0x49,0x30,0x00,0x01,0x71,0x09,0x05,0x03,
++	0x00,0x36,0x49,0x49,0x49,0x36,0x00,0x06,0x49,0x49,0x29,0x1e,0x00,0x00,0x6c,0x6c,
++	0x00,0x00,0x00,0x00,0xec,0x6c,0x00,0x00,0x00,0x08,0x14,0x22,0x41,0x00,0x00,0x24,
++	0x24,0x24,0x24,0x24,0x00,0x00,0x41,0x22,0x14,0x08,0x00,0x02,0x01,0x59,0x09,0x06,
++	0x00,0x3e,0x41,0x5d,0x55,0x1e,0x00,0x7e,0x11,0x11,0x11,0x7e,0x00,0x7f,0x49,0x49,
++	0x49,0x36,0x00,0x3e,0x41,0x41,0x41,0x22,0x00,0x7f,0x41,0x41,0x41,0x3e,0x00,0x7f,
++	0x49,0x49,0x49,0x41,0x00,0x7f,0x09,0x09,0x09,0x01,0x00,0x3e,0x41,0x49,0x49,0x7a,
++	0x00,0x7f,0x08,0x08,0x08,0x7f,0x00,0x00,0x41,0x7f,0x41,0x00,0x00,0x30,0x40,0x40,
++	0x40,0x3f,0x00,0x7f,0x08,0x14,0x22,0x41,0x00,0x7f,0x40,0x40,0x40,0x40,0x00,0x7f,
++	0x02,0x04,0x02,0x7f,0x00,0x7f,0x02,0x04,0x08,0x7f,0x00,0x3e,0x41,0x41,0x41,0x3e,
++	0x00,0x7f,0x09,0x09,0x09,0x06,0x00,0x3e,0x41,0x51,0x21,0x5e,0x00,0x7f,0x09,0x09,
++	0x19,0x66,0x00,0x26,0x49,0x49,0x49,0x32,0x00,0x01,0x01,0x7f,0x01,0x01,0x00,0x3f,
++	0x40,0x40,0x40,0x3f,0x00,0x1f,0x20,0x40,0x20,0x1f,0x00,0x3f,0x40,0x3c,0x40,0x3f,
++	0x00,0x63,0x14,0x08,0x14,0x63,0x00,0x07,0x08,0x70,0x08,0x07,0x00,0x71,0x49,0x45,
++	0x43,0x00,0x00,0x00,0x7f,0x41,0x41,0x00,0x00,0x02,0x04,0x08,0x10,0x20,0x00,0x00,
++	0x41,0x41,0x7f,0x00,0x00,0x04,0x02,0x01,0x02,0x04,0x00,0x80,0x80,0x80,0x80,0x80,
++	0x00,0x00,0x03,0x07,0x00,0x00,0x00,0x20,0x54,0x54,0x54,0x78,0x00,0x7f,0x44,0x44,
++	0x44,0x38,0x00,0x38,0x44,0x44,0x44,0x28,0x00,0x38,0x44,0x44,0x44,0x7f,0x00,0x38,
++	0x54,0x54,0x54,0x08,0x00,0x08,0x7e,0x09,0x09,0x00,0x00,0x18,0xa4,0xa4,0xa4,0x7c,
++	0x00,0x7f,0x04,0x04,0x78,0x00,0x00,0x00,0x00,0x7d,0x40,0x00,0x00,0x40,0x80,0x84,
++	0x7d,0x00,0x00,0x7f,0x10,0x28,0x44,0x00,0x00,0x00,0x00,0x7f,0x40,0x00,0x00,0x7c,
++	0x04,0x18,0x04,0x78,0x00,0x7c,0x04,0x04,0x78,0x00,0x00,0x38,0x44,0x44,0x44,0x38,
++	0x00,0xfc,0x44,0x44,0x44,0x38,0x00,0x38,0x44,0x44,0x44,0xfc,0x00,0x44,0x78,0x44,
++	0x04,0x08,0x00,0x08,0x54,0x54,0x54,0x20,0x00,0x04,0x3e,0x44,0x24,0x00,0x00,0x3c,
++	0x40,0x20,0x7c,0x00,0x00,0x1c,0x20,0x40,0x20,0x1c,0x00,0x3c,0x60,0x30,0x60,0x3c,
++	0x00,0x6c,0x10,0x10,0x6c,0x00,0x00,0x9c,0xa0,0x60,0x3c,0x00,0x00,0x64,0x54,0x54,
++	0x4c,0x00,0x00,0x08,0x3e,0x41,0x41,0x00,0x00,0x00,0x00,0x77,0x00,0x00,0x00,0x00,
++	0x41,0x41,0x3e,0x08,0x00,0x02,0x01,0x02,0x01,0x00,0x00,0x3c,0x26,0x23,0x26,0x3c};
+diff --git a/src/i2ccmds.c b/src/i2ccmds.c
+index c51772f1d..5190d6b1b 100644
+--- a/src/i2ccmds.c
++++ b/src/i2ccmds.c
+@@ -79,7 +79,8 @@ void command_i2c_write(uint32_t *args)
+     uint8_t data_len = args[1];
+     uint8_t *data = command_decode_ptr(args[2]);
+     int ret = i2c_dev_write(i2c, data_len, data);
+-    i2c_shutdown_on_err(ret);
++    if (!CONFIG_MACH_STM32F1)
++        i2c_shutdown_on_err(ret);
+ }
+ DECL_COMMAND(command_i2c_write, "i2c_write oid=%c data=%*s");
+ 
+@@ -102,7 +103,8 @@ void command_i2c_read(uint32_t *args)
+     uint8_t data_len = args[3];
+     uint8_t data[data_len];
+     int ret = i2c_dev_read(i2c, reg_len, reg, data_len, data);
+-    i2c_shutdown_on_err(ret);
++    if (!CONFIG_MACH_STM32F1)
++        i2c_shutdown_on_err(ret);
+     sendf("i2c_read_response oid=%c response=%*s", oid, data_len, data);
+ }
+ DECL_COMMAND(command_i2c_read, "i2c_read oid=%c reg=%*s read_len=%u");
+diff --git a/src/i2ccmds.h b/src/i2ccmds.h
+index 55c97b6b5..1dcdb9c56 100644
+--- a/src/i2ccmds.h
++++ b/src/i2ccmds.h
+@@ -11,6 +11,9 @@ enum {
+     I2C_BUS_TIMEOUT,
+     I2C_BUS_START_NACK,
+     I2C_BUS_START_READ_NACK,
++    I2C_BUS_BUSY,
++    I2C_BUS_START_BUSY,
++    I2C_BUS_ERR,
+ };
+ 
+ struct i2cdev_s {
+diff --git a/src/stm32/i2c.c b/src/stm32/i2c.c
+index 441f611a8..1a8c3bef0 100644
+--- a/src/stm32/i2c.c
++++ b/src/stm32/i2c.c
+@@ -48,18 +48,52 @@ static const struct i2c_info i2c_bus[] = {
+ #endif
+ };
+ 
++static void
++i2c_us_delay(uint32_t us)
++{
++    uint32_t t = timer_read_time() + timer_from_us(us);
++    while(t > timer_read_time());
++}
++
++static void
++i2c_init(I2C_TypeDef *i2c)
++{
++    uint32_t pclk = get_pclock_frequency((uint32_t)i2c);
++    i2c->CR2 = pclk / 1000000;
++    i2c->CCR = pclk / 100000 / 2;
++    i2c->TRISE = (pclk / 1000000) + 1;
++    i2c->CR1 = I2C_CR1_PE;
++}
++
+ // Work around stm32 errata causing busy bit to be stuck
+ static void
+-i2c_busy_errata(uint8_t scl_pin, uint8_t sda_pin)
++i2c_busy_errata(I2C_TypeDef *i2c)
+ {
+-    if (! CONFIG_MACH_STM32F1)
+-        return;
+-    gpio_peripheral(scl_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, 1);
+-    gpio_peripheral(sda_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, 1);
+-    gpio_peripheral(sda_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, -1);
+-    gpio_peripheral(scl_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, -1);
+-    gpio_peripheral(scl_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, 1);
+-    gpio_peripheral(sda_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, 1);
++    if(! CONFIG_MACH_STM32F1)
++        return ;
++    
++    const struct i2c_info *ii = container_of((I2C_TypeDef * const *)i2c, struct i2c_info, i2c);
++    uint32_t val;
++    (void)val;
++    val = i2c->SR1;
++    val = i2c->SR2;
++    val = i2c->DR;
++    i2c->CR1 = 0;
++    i2c->CR2 = 0;
++    i2c->DR = 0;
++
++    gpio_peripheral(ii->scl_pin, GPIO_OUTPUT, 1);
++    gpio_peripheral(ii->sda_pin, GPIO_OUTPUT, 1);
++    i2c_us_delay(20);
++    gpio_peripheral(ii->sda_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, -1);
++    gpio_peripheral(ii->scl_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, -1);
++    gpio_peripheral(ii->scl_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, 1);
++    gpio_peripheral(ii->sda_pin, GPIO_OUTPUT | GPIO_OPEN_DRAIN, 1);
++
++    i2c->CR1 = I2C_CR1_SWRST;
++    i2c_us_delay(5);
++    i2c->CR1 = 0;
++    i2c_init(i2c);
+ }
+ 
+ struct i2c_config
+@@ -74,47 +108,88 @@ i2c_setup(uint32_t bus, uint32_t rate, uint8_t addr)
+     if (!is_enabled_pclock((uint32_t)i2c)) {
+         // Enable i2c clock and gpio
+         enable_pclock((uint32_t)i2c);
+-        i2c_busy_errata(ii->scl_pin, ii->sda_pin);
++        i2c_busy_errata(i2c);
+         gpio_peripheral(ii->scl_pin, GPIO_FUNCTION(4) | GPIO_OPEN_DRAIN, 1);
+         gpio_peripheral(ii->sda_pin, GPIO_FUNCTION(4) | GPIO_OPEN_DRAIN, 1);
+         i2c->CR1 = I2C_CR1_SWRST;
+         i2c->CR1 = 0;
+ 
+         // Set 100Khz frequency and enable
+-        uint32_t pclk = get_pclock_frequency((uint32_t)i2c);
+-        i2c->CR2 = pclk / 1000000;
+-        i2c->CCR = pclk / 100000 / 2;
+-        i2c->TRISE = (pclk / 1000000) + 1;
+-        i2c->CR1 = I2C_CR1_PE;
++        i2c_init(i2c);
+     }
+ 
+     return (struct i2c_config){ .i2c=i2c, .addr=addr<<1 };
+ }
+ 
+-static uint32_t
++static void
++i2c_logging_info(I2C_TypeDef *i2c, uint32_t ret_code)
++{
++    sendf("ldc1612_i2c_report cr1_data=%u cr2_data=%u sr1_data=%u sr2_data=%u dr_data=%u err_code=%u",  
++          (uint32_t)(i2c->CR1), (uint32_t)(i2c->CR2),
++          (uint32_t)(i2c->SR1), (uint32_t)(i2c->SR2),
++          (uint32_t)(i2c->DR),  (uint32_t)(ret_code));
++}
++
++static int
+ i2c_wait(I2C_TypeDef *i2c, uint32_t set, uint32_t clear, uint32_t timeout)
+ {
+     for (;;) {
+-        uint32_t sr1 = i2c->SR1;
+-        if ((sr1 & set) == set && (sr1 & clear) == 0)
+-            return sr1;
+-        if (sr1 & I2C_SR1_AF)
+-            shutdown("I2C NACK error encountered");
++        int ret = 0;
++        I2C_TypeDef i2c_register = {
++            .SR1 = i2c->SR1, .SR2 = i2c->SR2, 
++            .CR1 = i2c->CR1, .CR2 = i2c->CR2
++        };
++        
++        if ((i2c_register.SR1 & set) == set && (i2c_register.SR1 & clear) == 0)
++            return (int)I2C_BUS_SUCCESS;
++
++        if (i2c_register.SR1 & I2C_SR1_AF)
++            ret |= (1 << I2C_BUS_NACK);
+         if (!timer_is_before(timer_read_time(), timeout))
+-            shutdown("i2c timeout");
++            ret |= (1 << I2C_BUS_TIMEOUT);
++
++        if (ret != 0) {
++            if (i2c_register.SR2 & I2C_SR2_BUSY)
++                ret |= (1 << I2C_BUS_BUSY);
++            if (i2c_register.SR1 & I2C_SR1_BERR)
++                ret |= (1 << I2C_BUS_ERR);
++            i2c_busy_errata(i2c);
++            i2c_register.DR = i2c->DR;
++            i2c_logging_info(&i2c_register, ret);
++            return ret;
++        }
+     }
+ }
+ 
+-static void
++static int
+ i2c_start(I2C_TypeDef *i2c, uint8_t addr, uint8_t xfer_len,
+           uint32_t timeout)
+ {
++    int ret = 0;
+     i2c->CR1 = I2C_CR1_START | I2C_CR1_PE;
+-    i2c_wait(i2c, I2C_SR1_SB, 0, timeout);
++    ret = i2c_wait(i2c, I2C_SR1_SB, 0, timeout);
++    if (ret != I2C_BUS_SUCCESS) {
++        if (ret == I2C_BUS_BUSY) {
++            if (i2c_wait(i2c, I2C_SR1_SB, 0, timeout) != I2C_BUS_SUCCESS) {
++                ret = I2C_BUS_BUSY;
++                goto abrt;
++            }
++        } else 
++            goto abrt;
++    }
+     i2c->DR = addr;
+     if (addr & 0x01)
+         i2c->CR1 |= I2C_CR1_ACK;
+-    i2c_wait(i2c, I2C_SR1_ADDR, 0, timeout);
++    ret = i2c_wait(i2c, I2C_SR1_ADDR, 0, timeout);
++    if (ret != I2C_BUS_SUCCESS) {
++        if (ret == I2C_BUS_BUSY) {
++            if (i2c_wait(i2c, I2C_SR1_ADDR, 0, timeout) != I2C_BUS_SUCCESS) {
++                ret = I2C_BUS_BUSY;
++                goto abrt;
++            }
++        } else 
++            goto abrt;
++    }
+     irqstatus_t flag = irq_save();
+     uint32_t sr2 = i2c->SR2;
+     if (addr & 0x01 && xfer_len == 1)
+@@ -122,25 +197,34 @@ i2c_start(I2C_TypeDef *i2c, uint8_t addr, uint8_t xfer_len,
+     irq_restore(flag);
+     if (!(sr2 & I2C_SR2_MSL))
+         shutdown("Failed to send i2c addr");
++abrt:
++    return ret;
+ }
+ 
+-static void
++static int
+ i2c_send_byte(I2C_TypeDef *i2c, uint8_t b, uint32_t timeout)
+ {
++    int ret = 0;
+     i2c->DR = b;
+-    i2c_wait(i2c, I2C_SR1_TXE, 0, timeout);
++    ret = i2c_wait(i2c, I2C_SR1_TXE, 0, timeout);
++    return ret;
+ }
+ 
+-static uint8_t
+-i2c_read_byte(I2C_TypeDef *i2c, uint32_t timeout, uint8_t remaining)
++static int
++i2c_read_byte(I2C_TypeDef *i2c, uint8_t *rb, uint32_t timeout, uint8_t remaining)
+ {
+-    i2c_wait(i2c, I2C_SR1_RXNE, 0, timeout);
++    int ret = 0;
++    ret = i2c_wait(i2c, I2C_SR1_RXNE, 0, timeout);
++    if (ret != I2C_BUS_SUCCESS)
++        goto abrt;
+     irqstatus_t flag = irq_save();
+     uint8_t b = i2c->DR;
++    *rb = b;
+     if (remaining == 1)
+         i2c->CR1 = I2C_CR1_STOP | I2C_CR1_PE;
+     irq_restore(flag);
+-    return b;
++abrt:
++    return ret;
+ }
+ 
+ static void
+@@ -153,38 +237,50 @@ i2c_stop(I2C_TypeDef *i2c, uint32_t timeout)
+ int
+ i2c_write(struct i2c_config config, uint8_t write_len, uint8_t *write)
+ {
++    int ret = 0;
+     I2C_TypeDef *i2c = config.i2c;
+     uint32_t timeout = timer_read_time() + timer_from_us(5000);
+ 
+-    i2c_start(i2c, config.addr, write_len, timeout);
+-    while (write_len--)
+-        i2c_send_byte(i2c, *write++, timeout);
++    ret = i2c_start(i2c, config.addr, write_len, timeout);
++    if (ret != I2C_BUS_SUCCESS)
++        goto abrt;
++    while (write_len--) {
++        ret = i2c_send_byte(i2c, *write++, timeout);
++    }
+     i2c_stop(i2c, timeout);
+-
+-    return I2C_BUS_SUCCESS;
++abrt:
++    return ret;
+ }
+ 
+ int
+ i2c_read(struct i2c_config config, uint8_t reg_len, uint8_t *reg
+          , uint8_t read_len, uint8_t *read)
+ {
++    int ret = 0;
+     I2C_TypeDef *i2c = config.i2c;
+     uint32_t timeout = timer_read_time() + timer_from_us(5000);
+     uint8_t addr = config.addr | 0x01;
+ 
+     if (reg_len) {
+         // write the register
+-        i2c_start(i2c, config.addr, reg_len, timeout);
+-        while(reg_len--)
+-            i2c_send_byte(i2c, *reg++, timeout);
++        ret = i2c_start(i2c, config.addr, reg_len, timeout);
++        if (ret != I2C_BUS_SUCCESS)
++            goto abrt;
++        while(reg_len--) {
++            ret = i2c_send_byte(i2c, *reg++, timeout);
++        }
+     }
+     // start/re-start and read data
+-    i2c_start(i2c, addr, read_len, timeout);
++    ret = i2c_start(i2c, addr, read_len, timeout);
++    if (ret != I2C_BUS_SUCCESS)
++        goto abrt;
+     while(read_len--) {
+-        *read = i2c_read_byte(i2c, timeout, read_len);
++        ret = i2c_read_byte(i2c, read, timeout, read_len);
+         read++;
+     }
+-    i2c_wait(i2c, 0, I2C_SR1_RXNE, timeout);
+-
+-    return I2C_BUS_SUCCESS;
++    ret = i2c_wait(i2c, 0, I2C_SR1_RXNE, timeout);
++    if (ret != I2C_BUS_SUCCESS)
++        goto abrt;
++abrt:
++    return ret;
+ }
+diff --git a/src/stm32/stm32f1.c b/src/stm32/stm32f1.c
+index 9d3c3b975..ff4ce7924 100644
+--- a/src/stm32/stm32f1.c
++++ b/src/stm32/stm32f1.c
+@@ -11,7 +11,9 @@
+ #include "board/misc.h" // bootloader_request
+ #include "internal.h" // enable_pclock
+ #include "sched.h" // sched_main
+-
++#include "ws2811.h"
++#include "UC1701.h"
++#include "stm32/gpio.h"
+ 
+ /****************************************************************
+  * Clock setup
+@@ -282,5 +284,11 @@ armcm_main(void)
+         stm32f1_alternative_remap(AFIO_MAPR_SWJ_CFG_Msk,
+                                   AFIO_MAPR_SWJ_CFG_JTAGDISABLE);
+ 
++    gpio_peripheral(GPIO('B', 7), GPIO_OUTPUT, 0);
++    gpio_out_setup(GPIO('B', 7), 0);
++    
++    gpio_peripheral(GPIO('A', 6), GPIO_OUTPUT, 0);
++    gpio_out_setup(GPIO('A', 6), 1);
++    
+     sched_main();
+ }
+diff --git a/src/stm32/stm32h7.c b/src/stm32/stm32h7.c
+index 387e47dd9..2a456ee76 100644
+--- a/src/stm32/stm32h7.c
++++ b/src/stm32/stm32h7.c
+@@ -12,8 +12,10 @@
+ #include "command.h" // DECL_CONSTANT_STR
+ #include "internal.h" // get_pclock_frequency
+ #include "sched.h" // sched_main
+-
+-
++#include "ws2811.h"
++#include "UC1701.h"
++#include "stm32/gpio.h"
++ 
+ /****************************************************************
+  * Clock setup
+  ****************************************************************/
+@@ -246,5 +248,12 @@ armcm_main(void)
+ 
+     clock_setup();
+ 
++    gpio_peripheral(GPIO('B', 0), GPIO_OUTPUT, 0);
++    gpio_out_setup(GPIO('B', 0), 0);
++    gpio_peripheral(GPIO('E', 11), GPIO_OUTPUT, 0);
++    gpio_out_setup(GPIO('E', 11), 0);
++    
++    lcd_init();
++    start_lcd();
+     sched_main();
+ }
+diff --git a/src/ws2811.c b/src/ws2811.c
+new file mode 100755
+index 000000000..554a2a32d
+--- /dev/null
++++ b/src/ws2811.c
+@@ -0,0 +1,90 @@
++#include "ws2811.h"
++#include "generic/armcm_timer.h" // udelay
++#include "stm32/internal.h"
++#include "stm32/gpio.h"
++
++#define GPIO_CS GPIO('C', 10)
++
++void RGB_IOInit(void)
++{
++	gpio_peripheral(GPIO_CS, GPIO_OUTPUT, 0);
++}
++
++void GPIO_SetBits(uint32_t pin)
++{
++	gpio_out_setup(pin, 1);
++}
++
++void GPIO_ResetBits(uint32_t pin)
++{
++	gpio_out_setup(pin, 0);
++}
++
++void DelayNops(uint32_t n)
++{
++    uint32_t clk_freq = SystemCoreClock;
++    uint32_t cycles = (clk_freq / 1000000000) * n;
++    for (uint32_t i = 0; i < cycles; i++) {
++        __NOP();
++    }
++}
++
++void SendOne(void){//T1H -> T1L
++	
++	GPIO_SetBits(GPIO_CS);
++	DelayNops(2);
++	
++	GPIO_ResetBits(GPIO_CS);
++	DelayNops(1);
++}
++
++void SendZero(void){//T0H -> T0L
++	GPIO_SetBits(GPIO_CS);
++	DelayNops(1);
++	
++	GPIO_ResetBits(GPIO_CS);
++	DelayNops(2);
++}
++
++void SendRGB(uint8_t red, uint8_t green, uint8_t blue) {
++	uint8_t i = 0;
++	for(i = 0;i < 8; i++){
++		if(red&0x80){
++			SendOne();
++		}
++		else{
++			SendZero();
++		}
++		red = red<<1;
++	}
++	for(i = 0;i < 8; i++){
++		if(green&0x80){
++			SendOne();
++		}
++		else{
++			SendZero();
++		}
++		green = green<<1;
++	}
++	for(i = 0;i < 8; i++){
++		if(blue&0x80){
++			SendOne();
++		}
++		else{
++			SendZero();
++		}
++		blue = blue<<1;
++	}
++}
++
++void RGB_Reset(void){							
++	GPIO_ResetBits(GPIO_CS);	
++	DelayNops(5);
++	GPIO_SetBits(GPIO_CS);		
++}
++
++void lcd_init(void) {
++	RGB_IOInit();
++	RGB_Reset();
++  SendRGB(255, 255, 255);
++}
+\ No newline at end of file
+diff --git a/src/ws2811.h b/src/ws2811.h
+new file mode 100755
+index 000000000..f69f66efd
+--- /dev/null
++++ b/src/ws2811.h
+@@ -0,0 +1,13 @@
++#ifndef __WS2811_H
++#define __WS2811_H
++#include <stdint.h> 
++
++void RGB_IOInit(void);
++void DelayNops(uint32_t n);
++void SendOne(void);
++void SendZero(void);
++void SendRGB(uint8_t red, uint8_t green, uint8_t blue);
++void RGB_Reset(void);
++void lcd_init(void);
++
++#endif

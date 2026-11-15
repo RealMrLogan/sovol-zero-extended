@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Sovol (extracted from Zero 1.4.7)" <sovol@invalid>
+Date: Sat, 14 Nov 2026 20:57:19 -0700
+Subject: [PATCH] mcu: relax scheduling checks and grow the move queue
+
+WARNING: disables the 'Timer too close' shutdown in sched.c. Review before upstreaming.
+---
+ klippy/mcu.py |  4 +++-
+ src/basecmd.c | 16 +++++++++++++---
+ src/sched.c   | 17 +++++++++++++++--
+ 3 files changed, 31 insertions(+), 6 deletions(-)
+
+diff --git a/klippy/mcu.py b/klippy/mcu.py
+index eb71e6bc2..98cf2f264 100644
+--- a/klippy/mcu.py
++++ b/klippy/mcu.py
+@@ -223,7 +223,7 @@ class MCU_trsync:
+             s.note_homing_end()
+         return params['trigger_reason']
+ 
+-TRSYNC_TIMEOUT = 0.025
++TRSYNC_TIMEOUT = 0.05
+ TRSYNC_SINGLE_MCU_TIMEOUT = 0.250
+ 
+ class TriggerDispatch:
+@@ -909,6 +909,8 @@ class MCU:
+         if (self._emergency_stop_cmd is None
+             or (self._is_shutdown and not force)):
+             return
++        code = self._printer.shutCode
++        self._serial.send(f"debug_shut data={code}")
+         self._emergency_stop_cmd.send()
+     def _restart_arduino(self):
+         logging.info("Attempting MCU '%s' reset", self._name)
+diff --git a/src/basecmd.c b/src/basecmd.c
+index 6d26884df..c0c6674cb 100644
+--- a/src/basecmd.c
++++ b/src/basecmd.c
+@@ -18,6 +18,9 @@
+  ****************************************************************/
+ 
+ static void *alloc_end;
++static uint32_t allocate_max = 0;
++static uint32_t move_queue_number = 0;
++static uint32_t move_queue_Water_line = 0;
+ 
+ void
+ alloc_init(void)
+@@ -50,6 +53,7 @@ alloc_chunks(size_t size, size_t count, uint16_t *avail)
+         shutdown("alloc_chunks failed");
+     void *data = alloc_chunk(p - alloc_end);
+     *avail = can_alloc;
++    allocate_max = can_alloc;
+     return data;
+ }
+ 
+@@ -78,6 +82,7 @@ move_free(void *m)
+     struct move_node *mf = m;
+     mf->next = move_free_list;
+     move_free_list = mf;
++    move_queue_number--;
+ }
+ 
+ // Allocate runtime storage
+@@ -89,6 +94,9 @@ move_alloc(void)
+     if (!mf)
+         shutdown("Move queue overflow");
+     move_free_list = mf->next;
++    move_queue_Water_line++;
++    if(move_queue_Water_line < move_queue_number)
++        move_queue_Water_line = move_queue_number;
+     irq_restore(flag);
+     return mf;
+ }
+@@ -163,6 +171,7 @@ move_reset(void)
+     struct move_node *mf = move_list + (move_count - 1)*move_item_size;
+     mf->next = NULL;
+     move_free_list = move_list;
++    output("allocate_max=%u move_queue_number=%u",allocate_max, move_queue_number);
+ }
+ DECL_SHUTDOWN(move_reset);
+ 
+@@ -173,7 +182,7 @@ move_finalize(void)
+         shutdown("Already finalized");
+     struct move_queue_head dummy;
+     move_queue_setup(&dummy, sizeof(*move_free_list));
+-    move_list = alloc_chunks(move_item_size, 1024, &move_count);
++    move_list = alloc_chunks(move_item_size, 4096, &move_count);
+     move_reset();
+ }
+ 
+@@ -245,7 +254,7 @@ void
+ command_get_config(uint32_t *args)
+ {
+     sendf("config is_config=%c crc=%u is_shutdown=%c move_count=%hu"
+-          , is_finalized(), config_crc, sched_is_shutdown(), move_count);
++          , is_finalized(), config_crc, sched_is_shutdown(), move_count - 10);
+ }
+ DECL_COMMAND_FLAGS(command_get_config, HF_IN_SHUTDOWN, "get_config");
+ 
+@@ -339,7 +348,8 @@ stats_update(uint32_t start, uint32_t cur)
+ void
+ command_emergency_stop(uint32_t *args)
+ {
+-    shutdown("Command request");
++    // shutdown("Command request");
++    sched_shutdown(shutCode);
+ }
+ DECL_COMMAND_FLAGS(command_emergency_stop, HF_IN_SHUTDOWN, "emergency_stop");
+ 
+diff --git a/src/sched.c b/src/sched.c
+index 51d159bc6..23fe38391 100644
+--- a/src/sched.c
++++ b/src/sched.c
+@@ -14,6 +14,7 @@
+ #include "command.h" // shutdown
+ #include "sched.h" // sched_check_periodic
+ #include "stepper.h" // stepper_event
++#include "UC1701.h"
+ 
+ static struct timer periodic_timer, sentinel_timer, deleted_timer;
+ 
+@@ -82,16 +83,27 @@ insert_timer(struct timer *pos, struct timer *t, uint32_t waketime)
+ }
+ 
+ // Schedule a function call at a supplied time.
++#define MIN_INTERVAL 50
+ void
+ sched_add_timer(struct timer *add)
+ {
+     uint32_t waketime = add->waketime;
+     irqstatus_t flag = irq_save();
+     struct timer *tl = SchedStatus.timer_list;
++
++    if(timer_is_before(waketime, timer_read_time() + MIN_INTERVAL))
++    {
++        waketime = timer_read_time() + MIN_INTERVAL;
++        add->waketime = waketime;
++    }
++    waketime = add -> waketime;
++
++
+     if (unlikely(timer_is_before(waketime, tl->waketime))) {
+         // This timer is before all other scheduled timers
+-        if (timer_is_before(waketime, timer_read_time()))
+-            try_shutdown("Timer too close");
++        // if (timer_is_before(waketime, timer_read_time()))
++        //     try_shutdown("Timer too close");
++
+         if (tl == &deleted_timer)
+             add->next = deleted_timer.next;
+         else
+@@ -305,6 +317,7 @@ run_shutdown(int reason)
+     extern void ctr_run_shutdownfuncs(void);
+     ctr_run_shutdownfuncs();
+     SchedStatus.shutdown_status = 1;
++    uc1701_shutdown(reason);
+     irq_enable();
+ 
+     sendf("shutdown clock=%u static_string_id=%hu", cur

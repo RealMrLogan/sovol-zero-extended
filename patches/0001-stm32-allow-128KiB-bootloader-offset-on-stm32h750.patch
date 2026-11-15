@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Sovol (extracted from Zero 1.4.7)" <sovol@invalid>
+Date: Sat, 14 Nov 2026 20:57:19 -0700
+Subject: [PATCH] stm32: allow 128KiB bootloader offset on stm32h750
+
+Needed for the mainboard, whose Katapult sits at 0x08000000-0x0801ffff.
+---
+ src/stm32/Kconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/stm32/Kconfig b/src/stm32/Kconfig
+index 4112e8334..67eae4f75 100644
+--- a/src/stm32/Kconfig
++++ b/src/stm32/Kconfig
+@@ -305,7 +305,7 @@ choice
+     config STM32_FLASH_START_4000
+         bool "16KiB bootloader" if MACH_STM32F207 || MACH_STM32F401 || MACH_STM32F4x5 || MACH_STM32F103 || MACH_STM32F072
+     config STM32_FLASH_START_20000
+-        bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7
++        bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7 || MACH_STM32H750
+ 
+     config STM32_FLASH_START_0000
+         bool "No bootloader"

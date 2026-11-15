@@ -1,0 +1,504 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Sovol (extracted from Zero 1.4.7)" <sovol@invalid>
+Date: Sat, 14 Nov 2026 20:57:19 -0700
+Subject: [PATCH] klippy: assorted Sovol host changes
+
+Hardcodes /home/sovol/printer_data paths in virtual_sdcard.py.
+---
+ klippy/chelper/__init__.py           | 14 ++---
+ klippy/configfile.py                 |  5 +-
+ klippy/extras/gcode_move.py          | 77 ++++++++++++++++++++++-
+ klippy/extras/gcode_shell_command.py | 94 ++++++++++++++++++++++++++++
+ klippy/extras/resonance_tester.py    | 14 +++++
+ klippy/extras/shaper_calibrate.py    |  1 -
+ klippy/extras/virtual_sdcard.py      |  8 ++-
+ klippy/kinematics/corexy.py          |  5 ++
+ klippy/kinematics/extruder.py        |  4 ++
+ klippy/toolhead.py                   | 24 +++----
+ 10 files changed, 219 insertions(+), 27 deletions(-)
+ create mode 100755 klippy/extras/gcode_shell_command.py
+
+diff --git a/klippy/chelper/__init__.py b/klippy/chelper/__init__.py
+index fa1261be9..8564b3b93 100644
+--- a/klippy/chelper/__init__.py
++++ b/klippy/chelper/__init__.py
+@@ -278,13 +278,13 @@ def get_ffi():
+         srcfiles = get_abs_files(srcdir, SOURCE_FILES)
+         ofiles = get_abs_files(srcdir, OTHER_FILES)
+         destlib = get_abs_files(srcdir, [DEST_LIB])[0]
+-        if check_build_code(srcfiles+ofiles+[__file__], destlib):
+-            if check_gcc_option(SSE_FLAGS):
+-                cmd = "%s %s %s" % (GCC_CMD, SSE_FLAGS, COMPILE_ARGS)
+-            else:
+-                cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
+-            logging.info("Building C code module %s", DEST_LIB)
+-            do_build_code(cmd % (destlib, ' '.join(srcfiles)))
++        # if check_build_code(srcfiles+ofiles+[__file__], destlib):
++        #     if check_gcc_option(SSE_FLAGS):
++        #         cmd = "%s %s %s" % (GCC_CMD, SSE_FLAGS, COMPILE_ARGS)
++        #     else:
++        #         cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
++        #     logging.info("Building C code module %s", DEST_LIB)
++        #     do_build_code(cmd % (destlib, ' '.join(srcfiles)))
+         FFI_main = cffi.FFI()
+         for d in defs_all:
+             FFI_main.cdef(d)
+diff --git a/klippy/configfile.py b/klippy/configfile.py
+index a8a4a4ff7..8e9883cbc 100644
+--- a/klippy/configfile.py
++++ b/klippy/configfile.py
+@@ -313,7 +313,6 @@ class PrinterConfig:
+         self._build_status(config)
+     def log_config(self, config):
+         lines = ["===== Config file =====",
+-                 self._build_config_string(config),
+                  "======================="]
+         self.printer.set_rollover_info("config", "\n".join(lines))
+     # Status reporting
+@@ -412,7 +411,7 @@ class PrinterConfig:
+         self._disallow_include_conflicts(regular_data, cfgname, gcode)
+         data = regular_data.rstrip() + autosave_data
+         # Determine filenames
+-        datestr = time.strftime("-%Y%m%d_%H%M%S")
++        datestr = "-backup"#time.strftime("-%Y%m%d_%H%M%S")
+         backup_name = cfgname + datestr
+         temp_name = cfgname + "_autosave"
+         if cfgname.endswith(".cfg"):
+@@ -432,4 +431,4 @@ class PrinterConfig:
+             logging.exception(msg)
+             raise gcode.error(msg)
+         # Request a restart
+-        gcode.request_restart('restart')
++        gcode.request_restart('firmware_restart')
+diff --git a/klippy/extras/gcode_move.py b/klippy/extras/gcode_move.py
+index ecdadc439..9f0bbc37e 100644
+--- a/klippy/extras/gcode_move.py
++++ b/klippy/extras/gcode_move.py
+@@ -4,6 +4,9 @@
+ #
+ # This file may be distributed under the terms of the GNU GPLv3 license.
+ import logging
++import json
++import configparser
++import os
+ 
+ class GCodeMove:
+     def __init__(self, config):
+@@ -26,7 +29,7 @@ class GCodeMove:
+         handlers = [
+             'G1', 'G20', 'G21',
+             'M82', 'M83', 'G90', 'G91', 'G92', 'M220', 'M221',
+-            'SET_GCODE_OFFSET', 'SAVE_GCODE_STATE', 'RESTORE_GCODE_STATE',
++            'SET_GCODE_OFFSET', 'SAVE_GCODE_STATE', 'RESTORE_GCODE_STATE', 'GET_GCODE_STATE',
+         ]
+         for cmd in handlers:
+             func = getattr(self, 'cmd_' + cmd)
+@@ -36,6 +39,7 @@ class GCodeMove:
+         gcode.register_command('M114', self.cmd_M114, True)
+         gcode.register_command('GET_POSITION', self.cmd_GET_POSITION, True,
+                                desc=self.cmd_GET_POSITION_help)
++        gcode.register_command('SOVOL_GET_STATE', self.cmd_SOVOL_GET_STATE)
+         self.Coord = gcode.Coord
+         # G-Code coordinate manipulation
+         self.absolute_coord = self.absolute_extrude = True
+@@ -56,6 +60,7 @@ class GCodeMove:
+             self.move_with_transform = toolhead.move
+             self.position_with_transform = toolhead.get_position
+         self.reset_last_position()
++        self.v_sd = self.printer.lookup_object('virtual_sdcard', None)
+     def _handle_shutdown(self):
+         if not self.is_printer_ready:
+             return
+@@ -109,10 +114,42 @@ class GCodeMove:
+     def reset_last_position(self):
+         if self.is_printer_ready:
+             self.last_position = self.position_with_transform()
++
++    def modify_cfg_value(self, option, new_value):
++        _config = configparser.ConfigParser()
++        _config.read('/home/sovol/printer_data/config/saved_variables.cfg')
++        _config.set('Variables', option, new_value)
++        with open('/home/sovol/printer_data/config/saved_variables.cfg', 'w') as file:
++            _config.write(file)
++
+     # G-Code movement commands
+     def cmd_G1(self, gcmd):
+         # Move
+         params = gcmd.get_command_parameters()
++        if 'G' in params and 'X' in params and 'Y' in params and 'Z' in params:
++            if self.v_sd.cmd_from_sd:
++                #commandline = gcmd.get_commandline()
++                cfg_file_path = '/home/sovol/printer_data/config/saved_variables.cfg'
++                _config = configparser.ConfigParser()
++                _config.read(cfg_file_path)
++                was_inter = _config.get('Variables', 'was_interrupted')
++                last_file = _config.get('Variables', 'last_file')
++                if 'Z' in params and float(params['Z']) > 0.2 and was_inter == 'False' and 'zoffset_test.gcode' not in last_file:
++                    self.modify_cfg_value('was_interrupted', "True")
++
++                # if 'Z' in params:       #for test
++                #     self.z_positon = params['Z']
++                # if self.z_positon != "":    #for test
++                content = {
++                    'commandline': gcmd.get_commandline(),
++                    'Z': params['Z'],                       #self.z_positon, 
++                    'extrude_type': 'M82' if self.absolute_extrude else 'M83',
++                    'e_extrude_abs': 0 #self.Coord(*self.move_position)[3]
++                }
++                with open("/home/sovol/sovol_plr_height", 'w') as height:
++                    json.dump(content, height)
++                    height.flush()
++                    os.fsync(height.fileno())
+         try:
+             for pos, axis in enumerate('XYZ'):
+                 if axis in params:
+@@ -271,6 +308,42 @@ class GCodeMove:
+                           "gcode homing: %s"
+                           % (mcu_pos, stepper_pos, kin_pos, toolhead_pos,
+                              gcode_pos, base_pos, homing_pos))
+-
++    cmd_GET_GCODE_STATE_help = "Get G-Code coordinate state"
++    def cmd_GET_GCODE_STATE(self, gcmd):
++        gcmd.respond_info("absolute_coord: %s\n"
++                        "absolute_extrude: %s\n"
++                        "base_position: %s\n"
++                        "last_position: %s\n"
++                        "homing_position: %s\n"
++                        "speed: %s\n"
++                        "speed_factor: %s\n"
++                        "extrude_factor: %s\n"
++                        % (self.absolute_coord, self.absolute_extrude, list(self.base_position),list(self.last_position),
++                        list(self.homing_position),self.speed,self.speed_factor,self.extrude_factor))
++    def cmd_SOVOL_GET_STATE(self, gcmd):
++        gcode = self.printer.lookup_object('gcode')
++        toolhead = self.printer.lookup_object('toolhead')
++        with open('/home/sovol/sovol_plr/gcode_move/position', 'r') as position:
++            _pos = position.read()
++        pos = list(eval(_pos))
++        with open('/home/sovol/sovol_plr/gcode_move/gcode_position', 'r') as gcode_position:
++            _g_pos = gcode_position.read()
++        g_pos = list(eval(_pos))
++        with open('/home/sovol/sovol_plr/gcode_move/absolute_coordinates', 'r') as absolute_coordinates:
++            _absolute_coordinates = absolute_coordinates.read()
++        ac = bool(_absolute_coordinates)
++        with open('/home/sovol/sovol_plr/gcode_move/absolute_extrude', 'r') as absolute_extrude:
++            _absolute_extrude = absolute_extrude.read()
++        ae = bool(_absolute_extrude)
++        with open('/home/sovol/sovol_plr/gcode_move/speed', 'r') as speed:
++            _speed = speed.read()
++        gcmd.respond_info("position: %s\n"
++                        "gcode_position: %s\n"
++                        "absolute_coordinates: %s\n"
++                        "absolute_extrude: %s\n" % (pos, g_pos, ac, ae))
++        self.absolute_coord = ac
++        self.absolute_extrude = ae
++        self.last_position = pos
++        self.base_position = pos
+ def load_config(config):
+     return GCodeMove(config)
+diff --git a/klippy/extras/gcode_shell_command.py b/klippy/extras/gcode_shell_command.py
+new file mode 100755
+index 000000000..3f316e695
+--- /dev/null
++++ b/klippy/extras/gcode_shell_command.py
+@@ -0,0 +1,94 @@
++# Run a shell command via gcode
++#
++# Copyright (C) 2019  Eric Callahan <arksine.code@gmail.com>
++#
++# This file may be distributed under the terms of the GNU GPLv3 license.
++import os
++import shlex
++import subprocess
++import logging
++
++
++class ShellCommand:
++    def __init__(self, config):
++        self.name = config.get_name().split()[-1]
++        self.printer = config.get_printer()
++        self.gcode = self.printer.lookup_object("gcode")
++        cmd = config.get("command")
++        cmd = os.path.expanduser(cmd)
++        self.command = shlex.split(cmd)
++        self.timeout = config.getfloat("timeout", 2.0, above=0.0)
++        self.verbose = config.getboolean("verbose", True)
++        self.proc_fd = None
++        self.partial_output = ""
++        self.gcode.register_mux_command(
++            "RUN_SHELL_COMMAND",
++            "CMD",
++            self.name,
++            self.cmd_RUN_SHELL_COMMAND,
++            desc=self.cmd_RUN_SHELL_COMMAND_help,
++        )
++
++    def _process_output(self, eventime):
++        if self.proc_fd is None:
++            return
++        try:
++            data = os.read(self.proc_fd, 4096)
++        except Exception:
++            pass
++        data = self.partial_output + data.decode()
++        if "\n" not in data:
++            self.partial_output = data
++            return
++        elif data[-1] != "\n":
++            split = data.rfind("\n") + 1
++            self.partial_output = data[split:]
++            data = data[:split]
++        else:
++            self.partial_output = ""
++        self.gcode.respond_info(data)
++
++    cmd_RUN_SHELL_COMMAND_help = "Run a linux shell command"
++
++    def cmd_RUN_SHELL_COMMAND(self, params):
++        gcode_params = params.get("PARAMS", "")
++        gcode_params = shlex.split(gcode_params)
++        reactor = self.printer.get_reactor()
++        try:
++            proc = subprocess.Popen(
++                self.command + gcode_params,
++                stdout=subprocess.PIPE,
++                stderr=subprocess.STDOUT,
++            )
++        except Exception:
++            logging.exception("shell_command: Command {%s} failed" % (self.name))
++            raise self.gcode.error("Error running command {%s}" % (self.name))
++        if self.verbose:
++            self.proc_fd = proc.stdout.fileno()
++            self.gcode.respond_info("Running Command {%s}...:" % (self.name))
++            hdl = reactor.register_fd(self.proc_fd, self._process_output)
++        eventtime = reactor.monotonic()
++        endtime = eventtime + self.timeout
++        complete = False
++        while eventtime < endtime:
++            eventtime = reactor.pause(eventtime + 0.05)
++            if proc.poll() is not None:
++                complete = True
++                break
++        if not complete:
++            proc.terminate()
++        if self.verbose:
++            if self.partial_output:
++                self.gcode.respond_info(self.partial_output)
++                self.partial_output = ""
++            if complete:
++                msg = "Command {%s} finished\n" % (self.name)
++            else:
++                msg = "Command {%s} timed out" % (self.name)
++            self.gcode.respond_info(msg)
++            reactor.unregister_fd(hdl)
++            self.proc_fd = None
++
++
++def load_config_prefix(config):
++    return ShellCommand(config)
+diff --git a/klippy/extras/resonance_tester.py b/klippy/extras/resonance_tester.py
+index fe8717d58..1b979cf2c 100644
+--- a/klippy/extras/resonance_tester.py
++++ b/klippy/extras/resonance_tester.py
+@@ -5,6 +5,7 @@
+ # This file may be distributed under the terms of the GNU GPLv3 license.
+ import logging, math, os, time
+ from . import shaper_calibrate
++import configparser
+ 
+ class TestAxis:
+     def __init__(self, axis=None, vib_dir=None):
+@@ -121,6 +122,7 @@ class ResonanceTester:
+     def __init__(self, config):
+         self.printer = config.get_printer()
+         self.move_speed = config.getfloat('move_speed', 50., above=0.)
++        self.recommended_params = [] #Record recommended parameters
+         self.test = VibrationPulseTest(config)
+         if not config.get('accel_chip_x', None):
+             self.accel_chip_names = [('xy', config.get('accel_chip').strip())]
+@@ -275,6 +277,7 @@ class ResonanceTester:
+     def cmd_SHAPER_CALIBRATE(self, gcmd):
+         # Parse parameters
+         axis = gcmd.get("AXIS", None)
++        test = gcmd.get("TEST", None)
+         if not axis:
+             calibrate_axes = [TestAxis('x'), TestAxis('y')]
+         elif axis.lower() not in 'xy':
+@@ -318,6 +321,10 @@ class ResonanceTester:
+                     "Recommended shaper_type_%s = %s, shaper_freq_%s = %.1f Hz"
+                     % (axis_name, best_shaper.name,
+                        axis_name, best_shaper.freq))
++            if test == '1':
++                self.modify_cfg_value(axis_name + "_freq", str(round(best_shaper.freq, 2)))
++                self.modify_cfg_value("show_freq", '1')
++                # self.recommended_params.append((axis_name, best_shaper.freq))  # Record recommended parameters
+             if input_shaper is not None:
+                 helper.apply_params(input_shaper, axis_name,
+                                     best_shaper.name, best_shaper.freq)
+@@ -376,6 +383,13 @@ class ResonanceTester:
+         shaper_calibrate.save_calibration_data(output, calibration_data,
+                                                all_shapers, max_freq)
+         return output
++        
++    def modify_cfg_value(self, option, new_value):
++        _config = configparser.ConfigParser()
++        _config.read('/home/sovol/printer_data/config/saved_variables.cfg')
++        _config.set('Variables', option, new_value)
++        with open('/home/sovol/printer_data/config/saved_variables.cfg', 'w') as file:
++            _config.write(file)
+ 
+ def load_config(config):
+     return ResonanceTester(config)
+diff --git a/klippy/extras/shaper_calibrate.py b/klippy/extras/shaper_calibrate.py
+index 6891fefb3..a2c976482 100644
+--- a/klippy/extras/shaper_calibrate.py
++++ b/klippy/extras/shaper_calibrate.py
+@@ -14,7 +14,6 @@ MAX_SHAPER_FREQ = 150.
+ TEST_DAMPING_RATIOS=[0.075, 0.1, 0.15]
+ 
+ AUTOTUNE_SHAPERS = ['zv', 'mzv', 'ei', '2hump_ei', '3hump_ei']
+-
+ ######################################################################
+ # Frequency response calculation and shaper auto-tuning
+ ######################################################################
+diff --git a/klippy/extras/virtual_sdcard.py b/klippy/extras/virtual_sdcard.py
+index 6dc49e2f5..000b40f97 100644
+--- a/klippy/extras/virtual_sdcard.py
++++ b/klippy/extras/virtual_sdcard.py
+@@ -84,8 +84,7 @@ class VirtualSD:
+                 filenames = os.listdir(self.sdcard_dirname)
+                 return [(fname, os.path.getsize(os.path.join(dname, fname)))
+                         for fname in sorted(filenames, key=str.lower)
+-                        if not fname.startswith('.')
+-                        and os.path.isfile((os.path.join(dname, fname)))]
++                        if os.path.isfile((os.path.join(dname, fname)))]
+             except:
+                 logging.exception("virtual_sdcard get_file_list")
+                 raise self.gcode.error("Unable to get file list")
+@@ -154,6 +153,7 @@ class VirtualSD:
+         if filename[0] == '/':
+             filename = filename[1:]
+         self._load_file(gcmd, filename, check_subdirs=True)
++        self.printer.send_event("klippy:start_print")
+         self.do_resume()
+     def cmd_M20(self, gcmd):
+         # List SD card
+@@ -197,6 +197,9 @@ class VirtualSD:
+         self.file_size = fsize
+         self.print_stats.set_current_file(filename)
+     def cmd_M24(self, gcmd):
++        if self.work_timer is not None:
++            raise self.gcode.error("SD busy")
++        self.printer.send_event("klippy:start_print")
+         # Start/resume SD print
+         self.do_resume()
+     def cmd_M25(self, gcmd):
+@@ -250,6 +253,7 @@ class VirtualSD:
+                     self.current_file = None
+                     logging.info("Finished SD card print")
+                     self.gcode.respond_raw("Done printing file")
++                    self.file_position = self.file_size
+                     break
+                 lines = data.split('\n')
+                 lines[0] = partial_input + lines[0]
+diff --git a/klippy/kinematics/corexy.py b/klippy/kinematics/corexy.py
+index d3b755001..dd1102005 100644
+--- a/klippy/kinematics/corexy.py
++++ b/klippy/kinematics/corexy.py
+@@ -8,6 +8,8 @@ import stepper
+ 
+ class CoreXYKinematics:
+     def __init__(self, toolhead, config):
++        self.printer = config.get_printer()
++        self.gcode = self.printer.lookup_object('gcode')
+         # Setup axis rails
+         self.rails = [stepper.LookupMultiRail(config.getsection('stepper_' + n))
+                       for n in 'xyz']
+@@ -66,12 +68,15 @@ class CoreXYKinematics:
+         self.limits = [(1.0, -1.0)] * 3
+     def _check_endstops(self, move):
+         end_pos = move.end_pos
++        axis_names = ['x', 'y', 'z']
+         for i in (0, 1, 2):
+             if (move.axes_d[i]
+                 and (end_pos[i] < self.limits[i][0]
+                      or end_pos[i] > self.limits[i][1])):
+                 if self.limits[i][0] > self.limits[i][1]:
++                    self.gcode.run_script_from_command(f'M117 Tip code: 104 {axis_names[i]}')
+                     raise move.move_error("Must home axis first")
++                self.gcode.run_script_from_command(f'M117 Tip code: 105 {axis_names[i]}')
+                 raise move.move_error()
+     def check_move(self, move):
+         limits = self.limits
+diff --git a/klippy/kinematics/extruder.py b/klippy/kinematics/extruder.py
+index 7fb2e7ed5..a0bb6907e 100644
+--- a/klippy/kinematics/extruder.py
++++ b/klippy/kinematics/extruder.py
+@@ -135,6 +135,7 @@ class ExtruderStepper:
+ class PrinterExtruder:
+     def __init__(self, config, extruder_num):
+         self.printer = config.get_printer()
++        self.gcode = self.printer.lookup_object('gcode')
+         self.name = config.get_name()
+         self.last_position = 0.
+         # Setup hotend heater
+@@ -204,12 +205,14 @@ class PrinterExtruder:
+     def check_move(self, move):
+         axis_r = move.axes_r[3]
+         if not self.heater.can_extrude:
++            self.gcode.run_script_from_command('M117 Tip code: 106')
+             raise self.printer.command_error(
+                 "Extrude below minimum temp\n"
+                 "See the 'min_extrude_temp' config option for details")
+         if (not move.axes_d[0] and not move.axes_d[1]) or axis_r < 0.:
+             # Extrude only move (or retraction move) - limit accel and velocity
+             if abs(move.axes_d[3]) > self.max_e_dist:
++                self.gcode.run_script_from_command('M117 Tip code: 107')
+                 raise self.printer.command_error(
+                     "Extrude only move too long (%.3fmm vs %.3fmm)\n"
+                     "See the 'max_extrude_only_distance' config"
+@@ -224,6 +227,7 @@ class PrinterExtruder:
+             area = axis_r * self.filament_area
+             logging.debug("Overextrude: %s vs %s (area=%.3f dist=%.3f)",
+                           axis_r, self.max_extrude_ratio, area, move.move_d)
++            self.gcode.run_script_from_command('M117 Tip code: 108')
+             raise self.printer.command_error(
+                 "Move exceeds maximum extrusion (%.3fmm^2 vs %.3fmm^2)\n"
+                 "See the 'max_extrude_cross_section' config option for details"
+diff --git a/klippy/toolhead.py b/klippy/toolhead.py
+index 4149d53b1..ffcfab3dd 100644
+--- a/klippy/toolhead.py
++++ b/klippy/toolhead.py
+@@ -186,20 +186,20 @@ class LookAheadQueue:
+             # Enough moves have been queued to reach the target flush time.
+             self.flush(lazy=True)
+ 
+-BUFFER_TIME_LOW = 1.0
+-BUFFER_TIME_HIGH = 2.0
+-BUFFER_TIME_START = 0.250
+-BGFLUSH_LOW_TIME = 0.200
+-BGFLUSH_BATCH_TIME = 0.200
+-BGFLUSH_EXTRA_TIME = 0.250
+-MIN_KIN_TIME = 0.100
+-MOVE_BATCH_TIME = 0.500
+-STEPCOMPRESS_FLUSH_TIME = 0.050
+-SDS_CHECK_TIME = 0.001 # step+dir+step filter in stepcompress.c
++BUFFER_TIME_LOW = 2.0
++BUFFER_TIME_HIGH = 4.0
++BUFFER_TIME_START = 0.800
++BGFLUSH_LOW_TIME = 0.500
++BGFLUSH_BATCH_TIME = 0.500
++BGFLUSH_EXTRA_TIME = 0.800
++MIN_KIN_TIME = 0.200
++MOVE_BATCH_TIME = 1.500
++STEPCOMPRESS_FLUSH_TIME = 0.200
++SDS_CHECK_TIME = 0.002 # step+dir+step filter in stepcompress.c
+ MOVE_HISTORY_EXPIRE = 30.
+ 
+-DRIP_SEGMENT_TIME = 0.050
+-DRIP_TIME = 0.100
++DRIP_SEGMENT_TIME = 0.200
++DRIP_TIME = 0.300
+ class DripModeEndSignal(Exception):
+     pass
+ 

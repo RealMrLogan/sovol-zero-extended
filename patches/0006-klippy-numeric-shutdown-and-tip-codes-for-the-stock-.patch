@@ -1,0 +1,257 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Sovol (extracted from Zero 1.4.7)" <sovol@invalid>
+Date: Sat, 14 Nov 2026 20:57:19 -0700
+Subject: [PATCH] klippy: numeric shutdown and tip codes for the stock UI
+
+---
+ klippy/extras/fan.py          | 32 ++++++++++++++++++++++++++++++--
+ klippy/extras/heater_fan.py   |  1 +
+ klippy/extras/idle_timeout.py | 15 ++++++++++-----
+ klippy/extras/lis2dw.py       |  2 ++
+ klippy/klippy.py              | 12 ++++++++++++
+ klippy/webhooks.py            |  8 ++++++++
+ src/command.c                 |  2 ++
+ src/command.h                 |  2 ++
+ src/debugcmds.c               |  9 +++++++++
+ 9 files changed, 76 insertions(+), 7 deletions(-)
+
+diff --git a/klippy/extras/fan.py b/klippy/extras/fan.py
+index c5677ba06..fff74e4bf 100644
+--- a/klippy/extras/fan.py
++++ b/klippy/extras/fan.py
+@@ -4,11 +4,13 @@
+ #
+ # This file may be distributed under the terms of the GNU GPLv3 license.
+ from . import pulse_counter, output_pin
++import logging
+ 
+ class Fan:
+     def __init__(self, config, default_shutdown_speed=0.):
+         self.printer = config.get_printer()
+-        self.last_fan_value = self.last_req_value = 0.
++        self.last_fan_value = self.last_req_value = 0. 
++        self.start_check_time = 0.
+         # Read config
+         self.max_power = config.getfloat('max_power', 1., above=0., maxval=1.)
+         self.kick_start_time = config.getfloat('kick_start_time', 0.1,
+@@ -44,6 +46,10 @@ class Fan:
+         self.printer.register_event_handler("gcode:request_restart",
+                                             self._handle_request_restart)
+ 
++        self.gcode = self.printer.lookup_object('gcode')
++        
++        self.fan_name = config.get_name().split()[-1]  # Extracts 'chamber_fan' or 'hotend_fan'
++
+     def get_mcu(self):
+         return self.mcu_fan.get_mcu()
+     def _apply_speed(self, print_time, value):
+@@ -72,9 +78,31 @@ class Fan:
+         self.gcrq.queue_gcode_request(value)
+     def _handle_request_restart(self, print_time):
+         self.set_speed(0., print_time)
+-
++    def reCheck(self, eventtime):
++        tachometer_status = self.tachometer.get_status(eventtime)
++        rpm = tachometer_status['rpm']
++        if self.last_fan_value >=0.2 and rpm == 0.0:
++            if self.fan_name == 'hotend_fan':
++                self.printer.invoke_shutdown("Exception in Hotend_fan")
++            elif self.fan_name == 'chamber_fan':
++                self.gcode.run_script_from_command('SET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET=0')
++                self.gcode.run_script_from_command('SET_PIN PIN=hot_led VALUE=1')
++                self.gcode.run_script_from_command('M117 Tip code: 110')
++                self.gcode.respond_info("Exception in chamber_fan")    
++            elif self.fan_name == 'exhaust_fan':
++                self.gcode.run_script_from_command('M117 Tip code: 125')
++                self.gcode.respond_info("Exception in exhaust_fan")    
+     def get_status(self, eventtime):
+         tachometer_status = self.tachometer.get_status(eventtime)
++        rpm = tachometer_status['rpm']
++        if self.last_fan_value >= 0.2 and rpm == 0.0:
++            if self.start_check_time == 0:
++                self.start_check_time = eventtime
++            elif eventtime - self.start_check_time >= 20.0:
++                self.reCheck(eventtime)
++                self.start_check_time = 0 
++        else:
++            self.start_check_time = 0  
+         return {
+             'speed': self.last_req_value,
+             'rpm': tachometer_status['rpm'],
+diff --git a/klippy/extras/heater_fan.py b/klippy/extras/heater_fan.py
+index 3630366e9..f6524eebf 100644
+--- a/klippy/extras/heater_fan.py
++++ b/klippy/extras/heater_fan.py
+@@ -34,6 +34,7 @@ class PrinterHeaterFan:
+         if speed != self.last_speed:
+             self.last_speed = speed
+             self.fan.set_speed(speed)
++        self.get_status(eventtime)
+         return eventtime + 1.
+ 
+ def load_config_prefix(config):
+diff --git a/klippy/extras/idle_timeout.py b/klippy/extras/idle_timeout.py
+index 6ab2a34a5..a143cfcdf 100644
+--- a/klippy/extras/idle_timeout.py
++++ b/klippy/extras/idle_timeout.py
+@@ -22,6 +22,7 @@ class IdleTimeout:
+         self.gcode = self.printer.lookup_object('gcode')
+         self.toolhead = self.timeout_timer = None
+         self.printer.register_event_handler("klippy:ready", self.handle_ready)
++        self.printer.register_event_handler("klippy:start_print", self.handle_start_print)
+         self.idle_timeout = config.getfloat('timeout', 600., above=0.)
+         gcode_macro = self.printer.load_object(config, 'gcode_macro')
+         self.idle_gcode = gcode_macro.load_template(config, 'gcode',
+@@ -31,11 +32,15 @@ class IdleTimeout:
+                                     desc=self.cmd_SET_IDLE_TIMEOUT_help)
+         self.state = "Idle"
+         self.last_print_start_systime = 0.
++        self.printing_time = 0.
+     def get_status(self, eventtime):
+-        printing_time = 0.
+-        if self.state == "Printing":
+-            printing_time = eventtime - self.last_print_start_systime
+-        return { "state": self.state, "printing_time": printing_time }
++        if self.state == "Printing": 
++            self.printing_time = eventtime - self.last_print_start_systime
++        return { "state": self.state, "printing_time": self.printing_time }
++        
++    def handle_start_print(self):
++        curtime = self.reactor.monotonic()
++        self.last_print_start_systime = curtime
+     def handle_ready(self):
+         self.toolhead = self.printer.lookup_object('toolhead')
+         self.timeout_timer = self.reactor.register_timer(self.timeout_handler)
+@@ -98,7 +103,7 @@ class IdleTimeout:
+             return
+         # Transition to "printing" state
+         self.state = "Printing"
+-        self.last_print_start_systime = curtime
++        #self.last_print_start_systime = curtime
+         check_time = READY_TIMEOUT + print_time - est_print_time
+         self.reactor.update_timer(self.timeout_timer, curtime + check_time)
+         self.printer.send_event("idle_timeout:printing",
+diff --git a/klippy/extras/lis2dw.py b/klippy/extras/lis2dw.py
+index 45c12ea1a..7f21fbeb9 100644
+--- a/klippy/extras/lis2dw.py
++++ b/klippy/extras/lis2dw.py
+@@ -36,6 +36,7 @@ BATCH_UPDATES = 0.100
+ class LIS2DW:
+     def __init__(self, config):
+         self.printer = config.get_printer()
++        self.gcode = self.printer.lookup_object('gcode')
+         adxl345.AccelCommandHelper(config, self)
+         self.axes_map = adxl345.read_axes_map(config, SCALE, SCALE, SCALE)
+         self.data_rate = 1600
+@@ -103,6 +104,7 @@ class LIS2DW:
+         dev_id = self.read_reg(REG_LIS2DW_WHO_AM_I_ADDR)
+         logging.info("lis2dw_dev_id: %x", dev_id)
+         if dev_id != LIS2DW_DEV_ID:
++            self.gcode.run_script_from_command('M117 Tip code: 111')
+             raise self.printer.command_error(
+                 "Invalid lis2dw id (got %x vs %x).\n"
+                 "This is generally indicative of connection problems\n"
+diff --git a/klippy/klippy.py b/klippy/klippy.py
+index 75ee6887a..e3401e3af 100644
+--- a/klippy/klippy.py
++++ b/klippy/klippy.py
+@@ -35,6 +35,7 @@ class Printer:
+         self.run_result = None
+         self.event_handlers = {}
+         self.objects = collections.OrderedDict()
++        self.shutCode = 0
+         # Init printer components that must be setup prior to config
+         for m in [gcode, webhooks]:
+             m.add_early_printer_objects(self)
+@@ -204,6 +205,17 @@ class Printer:
+         if self.in_shutdown_state:
+             return
+         logging.error("Transition to shutdown state: %s", msg)
++        
++        mcu_msg = details.get('reason', '')
++        logging.info("invoke_shutdown mcu_msg: %s, msg: %s", mcu_msg, msg)
++        
++        for index, theMsg in enumerate(["Lost communication with MCU", "Shutdown due to webhooks request", "ADC out of range", "Heater extruder not heating at expected rate",
++                                      "Heater heater_bed not heating at expected rate", "TMC 'stepper_x' reports error", "TMC 'stepper_y' reports error",
++                                      "TMC 'stepper_z' reports error", "TMC 'extruder' reports error", "Move queue overflow", "Missed scheduling of next digital out event",
++                                      "Unable to write tmc spi 'stepper_x' register", "Unable to write tmc spi 'stepper_y' register", "Exception in Hotend_fan"]):
++            if theMsg in msg or theMsg in mcu_msg:
++                self.shutCode = 60 + index
++         
+         self.in_shutdown_state = True
+         self._set_state(msg)
+         for cb in self.event_handlers.get("klippy:shutdown", []):
+diff --git a/klippy/webhooks.py b/klippy/webhooks.py
+index bccc5aace..79df34c93 100644
+--- a/klippy/webhooks.py
++++ b/klippy/webhooks.py
+@@ -5,6 +5,7 @@
+ # This file may be distributed under the terms of the GNU GPLv3 license
+ import logging, socket, os, sys, errno, json, collections
+ import gcode
++import configparser
+ 
+ REQUEST_LOG_SIZE = 20
+ 
+@@ -366,8 +367,15 @@ class WebHooks:
+         for sa in ['log_file', 'config_file', 'software_version', 'cpu_info']:
+             response[sa] = start_args.get(sa)
+         web_request.send(response)
++    def modify_cfg_value(self, option, new_value):
++        _config = configparser.ConfigParser()
++        _config.read('/home/sovol/printer_data/config/saved_variables.cfg')
++        _config.set('Variables', option, new_value)
++        with open('/home/sovol/printer_data/config/saved_variables.cfg', 'w') as file:
++            _config.write(file)
+ 
+     def _handle_estop_request(self, web_request):
++        self.modify_cfg_value('was_interrupted', "False")
+         self.printer.invoke_shutdown("Shutdown due to webhooks request")
+ 
+     def _handle_rpc_registration(self, web_request):
+diff --git a/src/command.c b/src/command.c
+index d2d05aff9..a7ce72d5d 100644
+--- a/src/command.c
++++ b/src/command.c
+@@ -15,6 +15,8 @@
+ 
+ static uint8_t next_sequence = MESSAGE_DEST;
+ 
++uint8_t shutCode;
++
+ static uint32_t
+ command_encode_ptr(void *p)
+ {
+diff --git a/src/command.h b/src/command.h
+index 21b3f79b8..dae685953 100644
+--- a/src/command.h
++++ b/src/command.h
+@@ -6,6 +6,8 @@
+ #include <stdint.h> // uint8_t
+ #include "ctr.h" // DECL_CTR
+ 
++extern uint8_t shutCode;
++
+ // Declare a function to run when the specified command is received
+ #define DECL_COMMAND_FLAGS(FUNC, FLAGS, MSG)                    \
+     DECL_CTR("DECL_COMMAND_FLAGS " __stringify(FUNC) " "        \
+diff --git a/src/debugcmds.c b/src/debugcmds.c
+index f1f2fb0f7..a5087da5b 100644
+--- a/src/debugcmds.c
++++ b/src/debugcmds.c
+@@ -52,6 +52,15 @@ command_debug_ping(uint32_t *args)
+ }
+ DECL_COMMAND_FLAGS(command_debug_ping, HF_IN_SHUTDOWN, "debug_ping data=%*s");
+ 
++void
++command_debug_shut(uint32_t *args)
++{
++    uint8_t count = args[0];
++    shutCode = count;
++    sendf("debug_shut data=%u", count);
++}
++DECL_COMMAND_FLAGS(command_debug_shut, HF_IN_SHUTDOWN, "debug_shut data=%u");
++
+ void
+ command_debug_nop(uint32_t *args)
+ {
