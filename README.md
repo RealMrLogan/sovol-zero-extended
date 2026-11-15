@@ -8,6 +8,7 @@ This repo is the source of truth: **upstream Klipper, pinned and unmodified, plu
 - `configs/`: build settings for each board (`toolhead.config`, `mainboard.config`)
 - `tools/`: build, deploy and flash over SSH
 - `FINDINGS.md`: what's on the printer and what Sovol changed
+- `RECOVERY.md`: what the installer recovers from by itself, and what to do by hand
 - `stock-config/config/`: stock 1.4.7 printer config (from the recovery image)
 - `from-printer/config/`: this printer's config before the 2026-11-14 reset (user mods, to re-add later)
 - `sovol-host/`: Sovol's scripts, services and system files outside Klipper (stock)
@@ -46,7 +47,8 @@ both board images, a manifest and `install.sh`.
 
 `install.sh` refuses while printing, checks every file's SHA-256 and each image's start address, backs up
 `klippy/`, restarts Klipper (rolling back if it doesn't come up), and flashes only boards whose running
-firmware version differs from the release (`--force-flash <board>` / `--no-flash` override).
+firmware version differs from the release (`--force-flash <board>` / `--no-flash` override). A board that
+doesn't come back on the expected version is flashed back to its previous image; see `RECOVERY.md`.
 `release/boards.conf` picks per board whether a release ships the stock image or one built from `patches/`.
 Build locally on the printer: `TREE=<patched tree> tools/make-release.sh vX.Y.Z`.
 

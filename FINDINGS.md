@@ -56,3 +56,11 @@ See README.md.
   from patches/ gives Sovol's newer 1.4.7 board code instead: move queue 2048 -> 4096, reworked I2C error
   handling (unused on the mainboard), and ws2811 timing whose delays round to zero at 400 MHz, which may break
   the stock screen's power-on white LEDs (Klipper's [neopixel] still sets them once connected).
+
+## Katapult double-reset (2026-11-14)
+Both bootloaders were built with CONFIG_ENABLE_DOUBLE_RESET (confirmed by disassembly, not yet by hardware):
+after reset they wait 10 ms, set the REQUEST_CANBOOT signature (0x5984E3FA6CA1589B) in RAM, wait to 0.5 s,
+then clear it and start the app. Two resets 10-500 ms apart therefore enter Katapult even if the app hangs.
+- mainboard Katapult: check at 0x8000d34 (10 ms = 0x3D0900 ticks @ 400 MHz)
+- toolhead Katapult: check at 0x80008a0 (10 ms = 0xAFC80 ticks @ 72 MHz)
+Needs a reset line: the mainboard's is probably EXP2 "RESET" (Sovol pinout); no toolhead reset is documented.

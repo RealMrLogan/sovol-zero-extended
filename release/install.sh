@@ -47,9 +47,9 @@ state=$(moon 'printer/objects/query?print_stats' |
 case $state in printing|paused) echo "printer is $state: refusing to install"; exit 1 ;; esac
 
 # decide which boards need flashing while Klipper can still tell us what they run
-flash=""
+flash=""; declare -A was
 for b in toolhead mainboard; do
-    want=$(mf "d['boards']['$b']['version']"); have=$(running_version $b)
+    want=$(mf "d['boards']['$b']['version']"); have=$(running_version $b); was[$b]=$have
     if [[ $force == *" $b "* ]]; then flash+=" $b"; log "$b: flash forced (running: ${have:-unknown})"
     elif [ "$noflash" = 1 ]; then log "$b: skipped (--no-flash)"
     elif [ -z "$have" ]; then log "$b: running version unknown (Klipper not ready), not flashing; use --force-flash $b"
@@ -73,27 +73,58 @@ if sync_klippy -n | grep -qE '^<f.* chelper/.*\.[ch]$'; then
 fi
 sync_klippy | grep -E '^(<f|\*deleting)' || echo "(no file changes)"
 
-sudo -n systemctl restart klipper
-if ! wait_ready; then
-    log "Klipper did not come back: restoring the previous klippy/"
+restore_host() {
+    log "restoring the previous klippy/"
     rsync -a --delete "$backup/klippy/" "$KLIPPER/klippy/"
     sudo -n systemctl restart klipper
     wait_ready || true
-    exit 1
+}
+
+sudo -n systemctl restart klipper
+if ! wait_ready; then
+    log "Klipper did not come back"; restore_host; exit 1
 fi
 
-if [ -n "$flash" ]; then
+# Flash one board (one retry, which also recovers a board left waiting in Katapult), then start
+# Klipper and check the board reports the expected version. Klipper is stopped again on return.
+flash_and_check() {   # board image expected-version
+    ./flash-board.sh "$1" "$2" || { log "$1: flash failed, retrying"; ./flash-board.sh "$1" "$2"; } || return 1
+    sudo -n systemctl start klipper
+    local rc=1
+    if wait_ready && [ "$(running_version "$1")" = "$3" ]; then rc=0; fi
     sudo -n systemctl stop klipper
+    return $rc
+}
+
+if [ -n "$flash" ]; then
+    mkdir -p "$STATE/firmware"           # last image flashed to each board, kept for rollback
     trap 'sudo -n systemctl start klipper' EXIT
-    for b in toolhead mainboard; do      # toolhead first: if the mainboard flash fails, both boards are offline
-        if [[ " $flash " == *" $b "* ]]; then ./flash-board.sh "$b" "firmware/$b.bin"; fi
+    # toolhead first and verified before the mainboard, which is also the toolhead's only link to the host
+    for b in toolhead mainboard; do
+        [[ " $flash " == *" $b "* ]] || continue
+        want=$(mf "d['boards']['$b']['version']")
+        if [ -f "$STATE/firmware/$b.bin" ] && [ "$(cat "$STATE/firmware/$b.version")" = "${was[$b]}" ]; then
+            old_img=$STATE/firmware/$b.bin; old_ver=${was[$b]}
+        else
+            old_img=$(mf "d['boards']['$b']['stock_file']"); old_ver=$(mf "d['boards']['$b']['stock_version']")
+        fi
+        sudo -n systemctl stop klipper
+        if flash_and_check "$b" "firmware/$b.bin" "$want"; then
+            cp "firmware/$b.bin" "$STATE/firmware/$b.bin"; echo "$want" > "$STATE/firmware/$b.version"
+            log "$b now runs $want"
+        else
+            log "$b: new firmware did not come up; flashing back $old_ver"
+            if flash_and_check "$b" "$old_img" "$old_ver"; then
+                log "$b restored to $old_ver"
+            else
+                log "$b: ROLLBACK FAILED, see RECOVERY.md"
+            fi
+            restore_host
+            exit 1
+        fi
     done
     sudo -n systemctl start klipper; trap - EXIT
     wait_ready
-    for b in $flash; do
-        want=$(mf "d['boards']['$b']['version']"); have=$(running_version $b)
-        [ "$have" = "$want" ] && log "$b now runs $have" || { log "$b reports '$have', expected '$want'"; exit 1; }
-    done
 fi
 
 echo "$version" > "$STATE/version"

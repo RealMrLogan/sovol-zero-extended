@@ -41,6 +41,9 @@ while read -r board source; do
     echo "== $board: $source (${ver[$board]})"
 done < <(grep -v '^\s*#' "$ROOT/release/boards.conf" | grep .)
 
+# stock images ride along so install.sh always has a known-good image to roll a board back to
+for b in toolhead mainboard; do cp "$ROOT/stock-firmware/stock-$b.bin" "$stage/firmware/stock-$b.bin"; done
+
 cp -r "$tree/klippy" "$stage/klipper/"
 find "$stage/klipper" \( -name '*.pyc' -o -name __pycache__ -o -name '*.so' \) -prune -exec rm -rf {} +
 cp "$ROOT/release/install.sh" "$ROOT/release/flash-board.sh" "$stage/"
@@ -56,10 +59,11 @@ json.dump({
     "commit": "$commit",
     "klipper_upstream": "$pin",
     "boards": {
-        b: {"file": "firmware/%s.bin" % b, "version": v, "app_start": s, "canbus_uuid": u}
-        for b, v, s, u in [
-            ("toolhead", "${ver[toolhead]}", "${start[toolhead]}", "${uuid[toolhead]}"),
-            ("mainboard", "${ver[mainboard]}", "${start[mainboard]}", "${uuid[mainboard]}"),
+        b: {"file": "firmware/%s.bin" % b, "version": v, "app_start": s, "canbus_uuid": u,
+            "stock_file": "firmware/stock-%s.bin" % b, "stock_version": sv}
+        for b, v, s, u, sv in [
+            ("toolhead", "${ver[toolhead]}", "${start[toolhead]}", "${uuid[toolhead]}", "$(stock_version toolhead)"),
+            ("mainboard", "${ver[mainboard]}", "${start[mainboard]}", "${uuid[mainboard]}", "$(stock_version mainboard)"),
         ]
     },
 }, open(sys.argv[1], "w"), indent=2)
