@@ -7,6 +7,9 @@
   - mainboard `[mcu]` STM32H750, USB-to-CAN bridge mode, canbus_uuid 0d1445047cdd, Katapult over USB, app @ 0x08020000
     (confirmed 2026-11-14 via Katapult CONNECT: Katapult 32c53b2-dirty, proto 1.1.0, block 64)
   - toolhead `[mcu extruder_mcu]` STM32F103xE, 8 MHz, canbus_uuid 61755fe321ac, Katapult over CAN, app @ 0x08002000
+    (Katapult 743f4cf-dirty; it answers on the chip's real CAN uuid, d45f94464ee5 on this unit, NOT the
+    fixed 61755fe321ac that Sovol's chipid patch gives Klipper: flashers must request the bootloader, then
+    query can0 for the Katapult node. Verified by flashing the stock image 2026-11-14.)
   - (an "extra_mcu" uuid 58a72bb93aa4 appears in scripts: optional chamber/extra board)
 - Sovol's flashing tools: sovol-official/... .deb -> printer_data/build/{flash_can.py (Katapult flashtool), *_update_fw.sh}
 - The .config / .config103 / .config750 in Sovol's tree say flash start 0x8000000: stale; real builds use Katapult offsets.

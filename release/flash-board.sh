@@ -22,7 +22,13 @@ if systemctl is-active -q klipper; then echo "stop Klipper first"; exit 1; fi
 
 echo "flashing $board ($(stat -c %s "$bin") bytes, reset vector 0x$rv)"
 if [ "$board" = toolhead ]; then
-    $FLASH -i can0 -u $uuid -f "$bin"
+    # Sovol's firmware pins Klipper's CAN uuid; Katapult answers on the chip's real one (unique per board), so find it
+    $FLASH -i can0 -u $uuid -r
+    sleep 1
+    katapult=$($FLASH -i can0 -q 2>&1 | sed -n 's/.*UUID: \([0-9a-f]*\), Application: Katapult.*/\1/p')
+    [ "$(echo "$katapult" | grep -c .)" = 1 ] || { echo "expected one Katapult node on can0, found: '${katapult//$'\n'/ }'"; exit 1; }
+    echo "toolhead Katapult uuid: $katapult"
+    $FLASH -i can0 -u "$katapult" -f "$bin"
 else
     $FLASH -i can0 -u $uuid -r
     dev=
