@@ -4,6 +4,10 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- install.sh: removes Sovol's 35-45 Hz limit on the resonance test (`[resonance_tester]` in `printer.cfg` and
+  the factory-reset copy). Klipper can't recommend an input shaper frequency it didn't test, so the display's
+  Input Shaping calibration always landed near 40 Hz; one Zero measured 72.8 Hz (X) and 53.2 Hz (Y). Rerun
+  Input Shaping from the display after installing.
 - CI: every push to `main` publishes a `nightly` prerelease (untested, for testing only), versioned
   from `git describe`. Tagged versions still build as drafts and stay the public releases.
 - Config page: refuses cross-site POSTs. Moonraker trusts every LAN address, so before this any web page open

@@ -115,7 +115,8 @@ restart_services() {   # each on its own, so one bad unit can't stop the others 
     return $rc
 }
 # Undoes klippy/, the apps and the config page. Left as installed on purpose: the crowsnest drop-in, the
-# zero-config unit and nginx snippet (both compatible with older releases) and the Sovol updater removal (one-way).
+# zero-config unit and nginx snippet (both compatible with older releases), the Sovol updater removal (one-way)
+# and the resonance test range (works with any release).
 restore_host() {
     trap - ERR
     log "restoring the previous klippy/ and apps"
@@ -222,6 +223,29 @@ if len(out) == len(lines):
 open(sys.argv[1], "w", newline="").write("".join(out))
 EOF
     then log "Sovol updaters: macros removed from ${cfg#"$HOME"/}"; fi
+done
+
+# Sovol's [resonance_tester] only sweeps 35-45 Hz, and SHAPER_CALIBRATE can't recommend a frequency it didn't
+# test, so the display's Input Shaping calibration lands near 40 Hz whatever the frame does (one Zero measured
+# x 72.8 / y 53.2). Dropping both lines restores Klipper's full range. Edits only Sovol's exact stock values.
+for cfg in "$HOME/printer_data/config/printer.cfg" "$HOME/patch/config/printer.cfg"; do
+    [ -f "$cfg" ] || continue
+    cp -p "$cfg" "$backup/$(echo "${cfg#"$HOME"/}" | tr / _)"
+    if python3 - "$cfg" <<'EOF'
+import sys
+lines = open(sys.argv[1], newline="").read().splitlines(True)
+out, section = [], None
+for line in lines:
+    if line.startswith("["):
+        section = line.strip()
+    if section == "[resonance_tester]" and line.strip() in ("min_freq: 35", "max_freq: 45"):
+        continue
+    out.append(line)
+if len(out) == len(lines):
+    sys.exit(1)                     # already full range (or edited by hand): leave it
+open(sys.argv[1], "w", newline="").write("".join(out))
+EOF
+    then log "input shaping: full test range restored in ${cfg#"$HOME"/}"; fi
 done
 
 log "installing host code"
