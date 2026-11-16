@@ -10,9 +10,11 @@ The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the
 - `tools/`: build, deploy and flash over SSH
 - `FINDINGS.md`: what's on the printer and what Sovol changed
 - `RECOVERY.md`: what the installer recovers from by itself, and what to do by hand
-- `stock-config/config/`: stock 1.4.7 printer config (from the recovery image)
 - `from-printer/config/`: this printer's config before the 2026-11-14 reset (user mods, to re-add later)
-- `sovol-host/`: Sovol's scripts, services and system files outside Klipper (stock)
+- Stock 1.4.7 reference (from the recovery image), kept in git at the tag `sovol-stock-reference`:
+  `sovol-host/` (Sovol's scripts, services and system files outside Klipper) and `stock-config/config/`
+  (stock printer config). Read with `git show sovol-stock-reference:<path>`, search with
+  `git grep <text> sovol-stock-reference`.
 - `stock-firmware/`: stock board images (mainboard read back from the board) and their version strings
 - `release/`: what goes in a release zip (`install.sh`, `flash-board.sh`), `boards.conf` and `apps.conf`
 - `release/zero-config/`: the config page at `http://<printer>/extended/` (stdlib Python server, one page, nginx snippet).

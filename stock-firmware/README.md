@@ -12,7 +12,7 @@ flash (0xFF) trimmed. Sovol never published a mainboard image, and no Sovol sour
 exactly (the build was from uncommitted edits), so this dump is the only exact copy.
 
 `stock-toolhead.bin` is Sovol's shipped toolhead image (same file as
-`sovol-host/home/sovol/printer_data/build/extruder_mcu_klipper.bin`); `patches/` rebuild it byte-identical.
+`sovol-host/home/sovol/printer_data/build/extruder_mcu_klipper.bin` at the `sovol-stock-reference` tag); `patches/` rebuild it byte-identical.
 `VERSIONS` lists the version string each image reports.
 
 Restore: `tools/flash-mcu.sh mainboard stock-firmware/stock-mainboard.bin`
