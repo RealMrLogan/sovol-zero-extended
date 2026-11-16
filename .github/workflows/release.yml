@@ -58,7 +58,7 @@ jobs:
           gh release delete nightly -R "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
           gh release create nightly --prerelease --latest=false --target "$GITHUB_SHA" \
             -R "$GITHUB_REPOSITORY" --title "nightly ($VERSION)" \
-            --notes "Untested build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA, rebuilt on every push. For testing only." \
+            --notes "Untested build of the latest \`main\`, rebuilt on every push. For testing only." \
             dist/*.zip dist/*.zip.sha256
 
       - name: Create draft release
