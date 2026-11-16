@@ -94,8 +94,8 @@ done < <(grep -v '^\s*#' apps.conf | grep .)
 
 sync_klippy() { rsync -rlptci --delete --exclude='*.pyc' --exclude=__pycache__ --exclude='*.so' "$@" klipper/klippy/ "$KLIPPER/klippy/"; }
 # shortcut: Sovol disabled klippy's automatic c_helper.so rebuild, so refuse releases that change chelper C
-# until install.sh builds it; "<f" = content differs (".f" = timestamp only)
-if sync_klippy -n | grep -qE '^<f.* chelper/.*\.[ch]$'; then
+# until install.sh builds it; ">f" = content differs (".f" = timestamp only)
+if sync_klippy -n | grep -qE '^>f.* chelper/.*\.[ch]$'; then
     echo "this release changes klippy/chelper C code, which install.sh cannot rebuild yet"; exit 1
 fi
 
@@ -175,8 +175,18 @@ if ! cmp -s zero-config/nginx.conf "$snippet" || ! grep -q "include $snippet;" "
     sudo -n systemctl reload nginx; log "config page: nginx set up at /extended/"
 fi
 
+# Sovol's OTA updater would install its own package over this one; releases come from /extended/ only.
+# It's started at boot by btt_init.sh (rc.local) and waits for the _OTA macro; comment it out, stop it.
+boot=/boot/scripts/btt_init.sh
+if [ -n "$(grep -s '^sudo -u sovol ./ota_service.sh' "$boot")" ]; then
+    sudo -n sed -i 's|^sudo -u sovol ./ota_service.sh|# disabled by sovol-zero-extended: &|' "$boot"
+    log "Sovol OTA: disabled at boot"
+fi
+# the pattern can't match this pkill's own command line (its "\." isn't ".")
+if sudo -n pkill -f '\./ota_service\.sh$'; then log "Sovol OTA: stopped"; fi
+
 log "installing host code"
-sync_klippy | grep -E '^(<f|\*deleting)' || echo "(no file changes)"
+sync_klippy | grep -E '^(>f|\*deleting)' || echo "(no file changes)"
 
 services_up() {
     local s

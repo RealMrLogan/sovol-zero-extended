@@ -2,6 +2,14 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
+## Unreleased
+
+- Sovol's OTA updater is removed: install.sh stops it starting at boot (`/boot/scripts/btt_init.sh`) and
+  stops the running copy, and the display menu's OTA entry is gone (patch 0009). Releases are installed from
+  `/extended/` only.
+- Built board firmware reports `zx-<hash of the image>` instead of the release version, so a release only
+  reflashes a board whose firmware actually changed.
+
 ## v0.2.0
 
 - Config page at `http://<printer>/extended/`: shows the installed release and board firmware, and has the

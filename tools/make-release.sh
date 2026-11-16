@@ -34,7 +34,11 @@ uuid=([toolhead]=61755fe321ac [mainboard]=0d1445047cdd)
 while read -r board source; do
     case $source in
         stock) cp "$ROOT/stock-firmware/stock-$board.bin" "$stage/firmware/$board.bin"; ver[$board]=$(stock_version "$board") ;;
-        build) ver[$board]=$("$ROOT/tools/build-firmware.sh" "$tree" "$board" "$work/fw" "$version")
+        build) # name the image after its own contents, so a release only reflashes a board whose firmware changed:
+               # build with a fixed placeholder (builds are reproducible), then stamp zx-<hash of that image>
+               "$ROOT/tools/build-firmware.sh" "$tree" "$board" "$work/probe" zero-extended >/dev/null
+               ver[$board]=$("$ROOT/tools/build-firmware.sh" "$tree" "$board" "$work/fw" \
+                   "zx-$(sha256sum "$work/probe/$board.bin" | cut -c1-12)")
                cp "$work/fw/$board.bin" "$stage/firmware/" ;;
         *) echo "boards.conf: bad source '$source' for $board"; exit 1 ;;
     esac

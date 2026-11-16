@@ -5,7 +5,7 @@ This repo is the source of truth: **upstream Klipper, pinned and unmodified, plu
 The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the same way, unmodified, in `release/apps.conf`.
 
 - `klipper/`: submodule, upstream [Klipper3d/klipper](https://github.com/Klipper3d/klipper) pinned at `faa89be8` (what Sovol based 1.4.7 on)
-- `patches/`: Sovol's changes, split by feature, applied in order on top of the pin. `sovol-commit-log.txt` keeps Sovol's original commit messages.
+- `patches/`: Sovol's changes (0001-0008), split by feature, then ours (0009 on), applied in order on top of the pin. `sovol-commit-log.txt` keeps Sovol's original commit messages.
 - `configs/`: build settings for each board (`toolhead.config`, `mainboard.config`)
 - `tools/`: build, deploy and flash over SSH
 - `FINDINGS.md`: what's on the printer and what Sovol changed
