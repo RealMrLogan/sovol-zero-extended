@@ -11,7 +11,7 @@
     fixed 61755fe321ac that Sovol's chipid patch gives Klipper: flashers must request the bootloader, then
     query can0 for the Katapult node. Verified by flashing the stock image 2026-11-14.)
   - (an "extra_mcu" uuid 58a72bb93aa4 appears in scripts: optional chamber/extra board)
-- Sovol's flashing tools: sovol-official/... .deb -> printer_data/build/{flash_can.py (Katapult flashtool), *_update_fw.sh}
+- Sovol's flashing tools: their 1.4.1 update .deb -> printer_data/build/{flash_can.py (Katapult flashtool), *_update_fw.sh}
 - The .config / .config103 / .config750 in Sovol's tree say flash start 0x8000000: stale; real builds use Katapult offsets.
 
 ## Klipper delta
@@ -36,7 +36,7 @@ See README.md.
 
 ## Sovol open-source references (checked 2026-11-14)
 - https://github.com/Sovol3d/SOVOL-ZERO (ref commit d745b00b, 2026-06-02)
-  - `Motherboard/Mcu_Pin_definition.pdf`, `Extra_Pin_definition.pdf`: board pinouts (copied to sovol-official/)
+  - `Motherboard/Mcu_Pin_definition.pdf`, `Extra_Pin_definition.pdf`: board pinouts
   - `STEP/`: CAD of the whole printer: frame, screen component, back cover, toolhead, enclosure (for the screen mount)
   - `sovol/`: snapshot of the stock /home/sovol from ~2025-03 (firmware ~1.3.x): mainsail build, patch/,
     usbmount, pyhelper, printer_data/build (flash scripts + toolhead bin), kiauh-backups. Older than our 1.4.7 copy.
@@ -49,8 +49,8 @@ See README.md.
 - Reference = official 1.4.7 recovery image. Its ~/klipper (commit 8a8b5e8 "1.4.5") equals upstream faa89be8 + patches/
   (only Sovol's README/.gitignore edits dropped). The toolhead build from patches/ is byte-identical to Sovol's image.
 - The printer had user edits (PROBE_CONTACT_Z_OFFSET_CALIBRATE in probe_eddy_current.py; custom Macro.cfg/printer.cfg).
-  Reset to stock on 2026-11-14, keeping the printer's SAVE_CONFIG calibration block; the user's versions are in
-  from-printer/config and in git history (commit 996f615).
+  Reset to stock on 2026-11-14, keeping the printer's SAVE_CONFIG calibration block; the user's versions are in git
+  history (commit 996f615).
 - Mainboard runs an older Sovol build (14d7b18-dirty, Feb 2025) that no available source rebuilds exactly
   (closest, cc8afd8: same size, different bytes). Exact copy kept in stock-firmware/. Flashing the mainboard
   from patches/ gives Sovol's newer 1.4.7 board code instead: move queue 2048 -> 4096, reworked I2C error

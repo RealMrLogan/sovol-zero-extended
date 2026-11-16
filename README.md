@@ -10,9 +10,6 @@ The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the
 - `tools/`: build, deploy and flash over SSH
 - `FINDINGS.md`: what's on the printer and what Sovol changed
 - `RECOVERY.md`: what the installer recovers from by itself, and what to do by hand
-- `from-printer/config/`: this printer's config before the 2026-11-14 reset (user mods, to re-add later).
-  Only `Macro.cfg`, `chamber_hot.cfg`, `printer.cfg` and `saved_variables.cfg` differ from stock; don't copy
-  `get_ip.cfg` back, it still has Sovol's updater macros that releases remove.
 - Stock 1.4.7 reference (from the recovery image), kept in git at the tag `sovol-stock-reference`:
   `sovol-host/` (Sovol's scripts, services and system files outside Klipper) and `stock-config/config/`
   (stock printer config). Read with `git show sovol-stock-reference:<path>`, search with
@@ -22,9 +19,6 @@ The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the
   `systemd/` (the crowsnest start-delay drop-in)
 - `release/zero-config/`: the config page at `http://<printer>/extended/` (stdlib Python server, one page, nginx snippet).
   Settings live in `SETTINGS` in `settings.py` (each has choices plus a get/set; add new options there), updates in `updates.py`, HTTP routes in `server.py`.
-- `sovol-official/`: Sovol's published update package, manuals and recovery-image checksums
-- Not in git (ignored): `.stockimg/` (the mounted recovery image) and `from-printer/klipper/` (the printer's
-  Klipper tree before the reset)
 
 ## Workflow
 ```sh
@@ -79,6 +73,7 @@ Build locally on the printer: `TREE=<patched tree> tools/make-release.sh vX.Y.Z`
 To restore stock firmware, use the official image from the wiki above
 (`H616_2.3.3_debian_sovol-zero-1.4.7.zip`, flashed with an eMMC adapter).
 This repo's `sovol-1.4.7-backup` release keeps a copy of that same file, only as a backup in case
-Sovol's link goes away. Checksum: `sovol-official/SHA256SUMS`.
+Sovol's link goes away. SHA-256 of the zip:
+`933a3e596370dc6d64ac30517ca9ccfd9276b4247363f7b1178666c89e9fb97e`.
 Stock toolhead firmware: `tools/flash-mcu.sh toolhead stock-firmware/stock-toolhead.bin`.
 Stock mainboard firmware: `tools/flash-mcu.sh mainboard stock-firmware/stock-mainboard.bin` (see `stock-firmware/README.md`).
