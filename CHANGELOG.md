@@ -4,6 +4,8 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- CI: every push to `main` publishes a `nightly` prerelease (untested, for testing only), versioned
+  from `git describe`. Tagged versions still build as drafts and stay the public releases.
 - Config page: refuses cross-site POSTs. Moonraker trusts every LAN address, so before this any web page open
   on the LAN could upload and install a release. Malformed requests now get a 400 instead of a dropped
   connection, and an install that was killed (power loss, reboot) no longer shows as successful.

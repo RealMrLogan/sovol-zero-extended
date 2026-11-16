@@ -1,18 +1,22 @@
 name: release
 
-# Push a tag like v0.2.0 (or v0.2.0-rc.1) to build a release zip and open a DRAFT release.
-# Install the draft on a printer (tools/install-release.sh <tag>), then publish it by hand.
+# Two channels:
+#  - nightly: every push to main (or "Run workflow") rebuilds the `nightly` prerelease from that commit.
+#    Untested, for test printers only. Its version is generated, e.g. v0.2.1-3-gabc1234 (3 commits after v0.2.1).
+#  - releases: push a tag like v0.2.0 (or v0.2.0-rc.1) to build the zip and open a DRAFT release.
+#    Install the draft on a printer (tools/install-release.sh <tag>), then publish it by hand.
 on:
   push:
+    branches: [main]
     tags: ['v*']
-  workflow_dispatch:      # "Run workflow" button: test build only, uploads the zip as a CI artifact
-    inputs:
-      version:
-        description: version to stamp (e.g. v0.0.0-test)
-        default: v0.0.0-test
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:            # a newer push to main replaces a nightly build still running
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 jobs:
   release:
@@ -28,34 +32,43 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git make cpp python3 gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi curl
           arm-none-eabi-gcc --version | head -1
+          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C /tmp
+          echo /tmp/gh_2.63.2_linux_amd64/bin >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
         with:
           submodules: true
+          fetch-depth: 0    # tags, for the nightly version
 
-      - name: Build release (fails unless the toolhead build is byte-identical to stock)
-        env:
-          VERSION: ${{ inputs.version || github.ref_name }}   # via env, not pasted into the script
+      - name: Build (fails unless the toolhead build is byte-identical to stock)
+        shell: bash
         run: |
           git config --global --add safe.directory '*'
-          tools/make-release.sh "$VERSION"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version=$GITHUB_REF_NAME
+          else version=$(git describe --tags --long --match 'v*'); fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          tools/make-release.sh "$version"
 
-      - name: Upload test build
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-build
-          path: dist/
-
-      - name: Create draft release
-        if: github.event_name == 'push'
+      - name: Publish nightly
+        if: github.ref_type == 'branch'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C /tmp
+          gh release delete nightly -R "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create nightly --prerelease --latest=false --target "$GITHUB_SHA" \
+            -R "$GITHUB_REPOSITORY" --title "nightly ($VERSION)" \
+            --notes "Untested build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA, rebuilt on every push. For testing only." \
+            dist/*.zip dist/*.zip.sha256
+
+      - name: Create draft release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           notes=$(awk -v v="$GITHUB_REF_NAME" '$1 == "##" {p = ($2 == v)} p' CHANGELOG.md)
           prerelease=$([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease || true)
-          /tmp/gh_2.63.2_linux_amd64/bin/gh release create "$GITHUB_REF_NAME" --draft $prerelease \
+          gh release create "$GITHUB_REF_NAME" --draft $prerelease \
             -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "${notes:-See CHANGELOG.md}" \
             dist/*.zip dist/*.zip.sha256
-        shell: bash

@@ -44,6 +44,10 @@ Set `PRINTER=user@host` if the printer isn't at `sovol@192.168.1.130`.
 Versions are `vMAJOR.MINOR.PATCH` (`-rc.N` for test builds). Each release is one zip with the host code,
 both board images, the upstream apps, a manifest and `install.sh`.
 
+**Nightly:** every push to `main` replaces the `nightly` prerelease with a build of that commit, versioned
+automatically from `git describe` (e.g. `v0.2.1-3-gabc1234`: 3 commits after v0.2.1). It's untested and for
+test printers only: `tools/install-release.sh nightly`. Versioned releases are the public ones:
+
 1. Add a `## vX.Y.Z` section to `CHANGELOG.md`, commit, then `git tag vX.Y.Z && git push origin main vX.Y.Z`.
 2. GitHub Actions builds the zip in Debian 11 (Sovol's exact compiler) and opens a **draft** release.
    The build fails unless the toolhead firmware still comes out byte-identical to Sovol's stock image.

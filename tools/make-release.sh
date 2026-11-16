@@ -5,7 +5,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 version=${1:?usage: make-release.sh <version>}
-[[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "version must look like v1.2.3 or v1.2.3-rc.1"; exit 1; }
+[[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "version must look like v1.2.3, v1.2.3-rc.1 or v1.2.3-4-gabc1234"; exit 1; }
 name=sovol-zero-extended-$version
 dist=$ROOT/dist; stage=$dist/$name
 rm -rf "$stage" "$dist/$name.zip"; mkdir -p "$stage/firmware" "$stage/klipper"
