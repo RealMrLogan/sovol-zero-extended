@@ -4,7 +4,8 @@
 import json, os, re, subprocess, sys
 from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from settings import SETTINGS
+import calibration
+from settings import SETTINGS, choices
 from updates import MAX_UPLOAD, install_args, save_upload, start_install, status, update_status
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,11 +31,13 @@ class Handler(BaseHTTPRequestHandler):
                     value, error = s["get"](), None
                 except Exception as e:
                     value, error = None, str(e)
-                out[key] = {"label": s["label"], "help": s["help"], "choices": s["choices"],
+                out[key] = {"label": s["label"], "help": s["help"], "choices": choices(s),
                             "applying": s["applying"], "value": value, "error": error}
             self.send(200, {"status": status(), "settings": out})
         elif self.path == "/api/update":
             self.send(200, update_status())
+        elif self.path == "/api/calibration":
+            self.send(200, calibration.status())
         else:
             self.send(404, {"error": "not found"})
 
@@ -57,6 +60,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.post_upload()
         if self.path == "/api/update/install":
             return self.post_install()
+        m = re.fullmatch(r"/api/calibration/([a-z-]+)", self.path)
+        if m and m.group(1) in calibration.JOBS:
+            return self.post_calibration(m.group(1))
         m = re.fullmatch(r"/api/settings/([a-z-]+)", self.path)
         if m and m.group(1) in SETTINGS:
             return self.post_setting(SETTINGS[m.group(1)])
@@ -90,12 +96,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(500, {"error": str(e)})
         self.send(200, update_status())
 
+    def post_calibration(self, name):
+        try:
+            body = self.rfile.read(max(self.body_length(), 0))
+            target = json.loads(body).get("target") if body else None
+            calibration.start(name, target)
+        except (ValueError, AttributeError) as e:
+            return self.send(400, {"error": str(e)})
+        except RuntimeError as e:
+            return self.send(409, {"error": str(e)})
+        self.send(200, calibration.status())
+
     def post_setting(self, s):
         try:
             value = json.loads(self.rfile.read(max(self.body_length(), 0)))["value"]
         except (ValueError, KeyError, TypeError):
             return self.send(400, {"error": "expected {\"value\": ...}"})
-        if not isinstance(value, str) or value not in s["choices"]:   # trust boundary: only known values reach set()
+        if not isinstance(value, str) or value not in choices(s):   # trust boundary: only known values reach set()
             return self.send(400, {"error": "invalid value"})
         try:
             s["set"](value)

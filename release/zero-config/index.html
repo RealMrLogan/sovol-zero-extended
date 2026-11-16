@@ -6,7 +6,7 @@
 <title>Zero Extended</title>
 <style>
   :root { color-scheme: dark; --bg: #121212; --card: #1e1e1e; --line: #2c2c2c; --text: #e6e6e6;
-          --muted: #9a9a9a; --accent: #d41216; --ok: #4caf50; --err: #ef5350; }
+          --muted: #9a9a9a; --accent: #d41216; --ok: #4caf50; --err: #ef5350; --belt-a: #4fc3f7; --belt-b: #ffb74d; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
   main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
@@ -36,6 +36,22 @@
   pre { background: #0b0b0b; border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin: 12px 0 0;
         max-height: 360px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  .checks { list-style: none; padding: 0; margin: 0 0 14px; }
+  .checks li { padding-left: 1.4em; position: relative; margin: 4px 0; font-size: 14px; }
+  .checks li::before { position: absolute; left: 0; }
+  .checks .ok::before { content: "✓"; color: var(--ok); } .checks .warn::before { content: "!"; color: #ffb74d; font-weight: 700; }
+  .checks .err::before { content: "✕"; color: var(--err); }
+  .jobs { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; }
+  .jobs input { width: 5.5em; background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+                padding: 6px 8px; font: inherit; }
+  .jobs label { font-size: 14px; color: var(--muted); }
+  .result { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+  .result h3 { font-size: 14px; margin: 0 0 6px; }
+  .result p { margin: 4px 0; font-size: 14px; }
+  .chart { width: 100%; height: auto; margin-top: 8px; }
+  .chart text { fill: var(--muted); font-size: 10px; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 3px; margin-right: 6px; vertical-align: middle; background: currentColor; }
 </style>
 </head>
 <body>
@@ -43,6 +59,26 @@
   <header><h1>Sovol Zero Extended</h1><a href="/">Back to Mainsail</a></header>
   <section class="card"><h2>Installed</h2><dl id="status"><dt>Loading…</dt><dd></dd></dl></section>
   <section class="card"><h2>Settings</h2><div id="settings"></div></section>
+  <section class="card" aria-labelledby="cal-h">
+    <h2 id="cal-h">Calibration</h2>
+    <ul class="checks" id="checks"><li>Loading…</li></ul>
+    <p class="note">These move or heat the printer, so keep it clear. Results are saved with Klipper's SAVE_CONFIG,
+      which restarts Klipper; calibration nobody saved (like the eddy probe's from the last print) is discarded.</p>
+    <div class="jobs">
+      <span>Input shaping <label>(about 5 min)</label></span>
+      <button type="button" class="btn secondary" data-job="shaper">Run</button>
+      <span>Belt check <label>(about 5 min)</label></span>
+      <button type="button" class="btn secondary" data-job="belts">Run</button>
+      <span>Bed heater at <input type="number" id="t-pid-bed" value="60" min="40" max="110" aria-label="Bed target °C"> °C</span>
+      <button type="button" class="btn secondary" data-job="pid-bed">Run</button>
+      <span>Nozzle heater at <input type="number" id="t-pid-nozzle" value="220" min="170" max="280" aria-label="Nozzle target °C"> °C
+        <label>(part fan at 60%)</label></span>
+      <button type="button" class="btn secondary" data-job="pid-nozzle">Run</button>
+    </div>
+    <div class="msg" id="cal-msg" role="status" aria-live="polite"></div>
+    <pre id="cal-log" hidden></pre>
+    <div id="cal-results"></div>
+  </section>
   <section class="card" aria-labelledby="update-h">
     <h2 id="update-h">Update</h2>
     <p class="note">Install a release zip from GitHub. Boards are only flashed if the release changes their firmware;
@@ -133,6 +169,84 @@ async function follow() {   // poll the install; the page's own server may resta
   load();
 }
 
+const svg = (tag, attrs) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+
+function beltChart(b) {   // the two belts' resonance spectra, normalised to the larger peak
+  const W = 600, H = 200, L = 28, B = 22, f0 = b.freq[0], f1 = b.freq[b.freq.length - 1];
+  const x = (f) => L + (f - f0) / (f1 - f0) * (W - L - 6), y = (v) => (H - B) - v * (H - B - 8);
+  const el = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart", role: "img", "aria-label": "Belt spectra. " + b.verdict });
+  for (let f = 20; f <= f1; f += 20) {
+    el.append(svg("line", { x1: x(f), x2: x(f), y1: 8, y2: H - B, stroke: "var(--line)" }));
+    const t = svg("text", { x: x(f), y: H - 6, "text-anchor": "middle" }); t.textContent = f + " Hz"; el.append(t);
+  }
+  for (const [key, color] of [["a", "var(--belt-a)"], ["b", "var(--belt-b)"]])
+    el.append(svg("polyline", { fill: "none", stroke: color, "stroke-width": 2,
+      points: b.freq.map((f, i) => x(f).toFixed(1) + "," + y(b[key][i]).toFixed(1)).join(" ") }));
+  return el;
+}
+
+function renderCalibration(d) {
+  $("#checks").replaceChildren(...d.checks.map(([level, msg]) => text("li", msg, level)));
+  const running = d.job.running;
+  document.querySelectorAll("[data-job]").forEach((b) => (b.disabled = running));
+  $("#cal-log").hidden = !running; if (running) $("#cal-log").textContent = d.log.join("\n") || "Starting…";
+  if (running) setCalMsg("Running " + d.job.label + "…");
+  else if (d.job.error) setCalMsg(d.job.label + " failed: " + d.job.error, "err");
+  else if (d.job.name) setCalMsg(d.job.label + " finished.", "ok");
+  const r = d.results, out = [], when = (t) => new Date(t * 1000).toLocaleString();
+  if (r.shaper) {
+    const box = document.createElement("div"); box.className = "result";
+    box.append(text("h3", "Input shaping (" + when(r.shaper.time) + ")"));
+    for (const a of ["x", "y"]) box.append(text("p", a.toUpperCase() + ": " + r.shaper[a].type.toUpperCase() + " at " +
+      r.shaper[a].freq + " Hz, keep acceleration under " + (r.shaper[a].max_accel || "?").toLocaleString() + " mm/s²"));
+    out.push(box);
+  }
+  if (r.belts) {
+    const box = document.createElement("div"); box.className = "result";
+    const legend = document.createElement("div"); legend.className = "legend";
+    const la = text("span", "Belt A (front-left ↔ back-right)"); la.style.color = "var(--belt-a)";
+    const lb = text("span", "Belt B (front-right ↔ back-left)"); lb.style.color = "var(--belt-b)";
+    legend.append(la, lb);
+    box.append(text("h3", "Belt check (" + when(r.belts.time) + ")"), text("p", r.belts.verdict), legend, beltChart(r.belts));
+    out.push(box);
+  }
+  for (const [key, name] of [["pid-bed", "Bed heater"], ["pid-nozzle", "Nozzle heater"]]) if (r[key]) {
+    const p = r[key], box = document.createElement("div"); box.className = "result";
+    box.append(text("h3", name + " (" + when(p.time) + ")"),
+               text("p", `Tuned at ${p.target} °C: Kp ${p.kp}, Ki ${p.ki}, Kd ${p.kd}`));
+    out.push(box);
+  }
+  $("#cal-results").replaceChildren(...out);
+  return running;
+}
+
+const setCalMsg = (s, cls) => { const m = $("#cal-msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
+let calPolling = false;
+async function loadCalibration() {   // polls while a calibration runs
+  if (calPolling) return; calPolling = true;
+  try {
+    for (;;) {
+      let running = false;
+      try { running = renderCalibration(await (await fetch("api/calibration")).json()); } catch (e) { /* Klipper restarting */ running = true; }
+      if (!running) break;
+      await sleep(2000);
+    }
+  } finally { calPolling = false; }
+  load();   // a calibration can change settings ("From input shaping")
+}
+
+document.querySelectorAll("[data-job]").forEach((b) => (b.onclick = async () => {
+  const job = b.dataset.job, input = $("#t-" + job);
+  const body = input ? JSON.stringify({ target: Number(input.value) }) : undefined;
+  try {
+    const r = await fetch("api/calibration/" + job, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    loadCalibration();
+  } catch (e) { setCalMsg("Could not start: " + e.message, "err"); }
+}));
+
 $("#pick").onclick = () => $("#file").click();
 $("#file").onchange = async () => {
   const f = $("#file").files[0]; $("#file").value = "";
@@ -163,6 +277,7 @@ fetch("api/update").then((r) => r.json()).then((d) => {
 }).catch(() => {});
 
 load();
+loadCalibration();
 </script>
 </body>
 </html>

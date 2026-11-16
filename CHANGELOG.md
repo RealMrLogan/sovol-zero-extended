@@ -4,12 +4,17 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
-- install.sh: removes Sovol's 35-45 Hz limit on the resonance test (`[resonance_tester]` in `printer.cfg` and
-  the factory-reset copy). Klipper can't recommend an input shaper frequency it didn't test, so the display's
-  Input Shaping calibration always landed near 40 Hz; one Zero measured 72.8 Hz (X) and 53.2 Hz (Y). Rerun
-  Input Shaping from the display after installing.
-- CI: every push to `main` publishes a `nightly` prerelease (untested, for testing only), versioned
-  from `git describe`. Tagged versions still build as drafts and stay the public releases.
+- Config page: a Calibration section runs input shaping, a CoreXY belt check (both belts' resonance
+  spectra, graphed, with a verdict) and bed/nozzle heater PID tuning, and saves results with Klipper's
+  SAVE_CONFIG (after a restart, so Sovol's leftover per-print eddy calibration isn't saved with them). It
+  also flags what Sovol's defaults leave behind: input shaping off, factory bed tuning.
+- Config page settings: X/Y motor current (Stock 3.5 A / Quiet 2.5 A / Low 1.5 A) and an acceleration limit that caps
+  what any print file asks for (Sovol's profiles use 40,000 mm/s²), including "From input shaping".
+- `zero-extended.cfg`: Klipper settings this firmware owns, included at the end of `printer.cfg` and of
+  Sovol's factory-reset copy, so they win over Sovol's values and survive a factory reset. It widens the
+  resonance test from Sovol's 35-45 Hz (SHAPER_CALIBRATE can't recommend a frequency it didn't test, so the
+  display's Input Shaping always landed near 40 Hz; one Zero measured 72.8 Hz on X and 53.2 Hz on Y) and
+  sets Klipper's default damping (Sovol: 0.001). Rerun input shaping after installing.
 - Config page: refuses cross-site POSTs. Moonraker trusts every LAN address, so before this any web page open
   on the LAN could upload and install a release. Malformed requests now get a 400 instead of a dropped
   connection, and an install that was killed (power loss, reboot) no longer shows as successful.

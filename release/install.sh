@@ -9,6 +9,9 @@ set -eEuo pipefail   # -E: the ERR trap below also fires inside functions
 cd "$(dirname "$0")"
 KLIPPER=$HOME/klipper
 STATE=$HOME/zero-extended          # installed version, manifest, backups, install.log
+PRINTER_CFG=$HOME/printer_data/config/printer.cfg
+PATCH_CFG=$HOME/patch/config/printer.cfg   # Sovol's copy, restored by the display's factory reset
+OUR_CFG=$HOME/printer_data/config/zero-extended
 mkdir -p "$STATE/backup"
 exec > >(tee -a "$STATE/install.log") 2>&1
 
@@ -114,9 +117,9 @@ restart_services() {   # each on its own, so one bad unit can't stop the others 
     for s in klipper $restart; do sudo -n systemctl restart "$s" || rc=1; done
     return $rc
 }
-# Undoes klippy/, the apps and the config page. Left as installed on purpose: the crowsnest drop-in, the
-# zero-config unit and nginx snippet (both compatible with older releases), the Sovol updater removal (one-way)
-# and the resonance test range (works with any release).
+# Undoes klippy/, the apps, the config page and zero-extended.cfg. Left as installed on purpose: the crowsnest
+# drop-in, the zero-config unit and nginx snippet (both compatible with older releases) and the Sovol updater
+# removal (one-way).
 restore_host() {
     trap - ERR
     log "restoring the previous klippy/ and apps"
@@ -127,6 +130,12 @@ restore_host() {
     for d in "$backup"/apps/*/; do if [ -d "$d" ]; then rsync -a --delete "$d" "$HOME/$(basename "$d")/"; fi; done
     for name in $stashed; do git -C "$HOME/$name" stash pop -q || log "$name: local changes kept in git stash"; done
     if [ -d "$backup/zero-config" ]; then rsync -a --delete "$backup/zero-config/" "$STATE/zero-config/"; fi
+    if [ -f "$backup/klipper-config/printer.cfg" ]; then   # a bad zero-extended.cfg would keep Klipper down
+        cp -p "$backup/klipper-config/printer.cfg" "$PRINTER_CFG"
+        if [ -f "$backup/klipper-config/patch-printer.cfg" ]; then cp -p "$backup/klipper-config/patch-printer.cfg" "$PATCH_CFG"; fi
+        rm -rf "$OUR_CFG"
+        if [ -d "$backup/klipper-config/zero-extended" ]; then cp -a "$backup/klipper-config/zero-extended" "$OUR_CFG"; fi
+    fi
     restart_services || true
     wait_ready || true
 }
@@ -225,28 +234,15 @@ EOF
     then log "Sovol updaters: macros removed from ${cfg#"$HOME"/}"; fi
 done
 
-# Sovol's [resonance_tester] only sweeps 35-45 Hz, and SHAPER_CALIBRATE can't recommend a frequency it didn't
-# test, so the display's Input Shaping calibration lands near 40 Hz whatever the frame does (one Zero measured
-# x 72.8 / y 53.2). Dropping both lines restores Klipper's full range. Edits only Sovol's exact stock values.
-for cfg in "$HOME/printer_data/config/printer.cfg" "$HOME/patch/config/printer.cfg"; do
-    [ -f "$cfg" ] || continue
-    cp -p "$cfg" "$backup/$(echo "${cfg#"$HOME"/}" | tr / _)"
-    if python3 - "$cfg" <<'EOF'
-import sys
-lines = open(sys.argv[1], newline="").read().splitlines(True)
-out, section = [], None
-for line in lines:
-    if line.startswith("["):
-        section = line.strip()
-    if section == "[resonance_tester]" and line.strip() in ("min_freq: 35", "max_freq: 45"):
-        continue
-    out.append(line)
-if len(out) == len(lines):
-    sys.exit(1)                     # already full range (or edited by hand): leave it
-open(sys.argv[1], "w", newline="").write("".join(out))
-EOF
-    then log "input shaping: full test range restored in ${cfg#"$HOME"/}"; fi
-done
+# zero-extended.cfg: our Klipper settings (full resonance test range, damping, the page's motor current and
+# acceleration settings), included at the end of printer.cfg and of Sovol's factory-reset copy, so it wins
+# over Sovol's values and survives a factory reset. See zero-config/tuning.py. Rolled back with the host.
+mkdir -p "$backup/klipper-config"
+cp -p "$PRINTER_CFG" "$backup/klipper-config/printer.cfg"
+if [ -f "$PATCH_CFG" ]; then cp -p "$PATCH_CFG" "$backup/klipper-config/patch-printer.cfg"; fi
+if [ -d "$OUR_CFG" ]; then cp -a "$OUR_CFG" "$backup/klipper-config/"; fi
+tuned=$(cd "$STATE/zero-config" && python3 tuning.py install "$PRINTER_CFG" "$PATCH_CFG")
+if [ -n "$tuned" ]; then log "Klipper settings: $tuned"; fi
 
 log "installing host code"
 synced=$(sync_klippy)   # captured, so a failing rsync triggers the rollback instead of reading as "no changes"
