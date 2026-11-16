@@ -19,11 +19,15 @@ require_idle() {
     esac
 }
 
-wait_ready() {
-    local s i
-    for i in $(seq 45); do
+wait_ready() {   # like install.sh's: one FIRMWARE_RESTART clears an MCU shutdown left by a klippy startup race
+    local s fw=0
+    for _ in $(seq 45); do
         s=$(rsh 'curl -s localhost:7125/printer/info' | jq_py 'd["result"]["state"]') || true
         [ "$s" = ready ] && { echo "klipper: ready"; return 0; }
+        if [[ $s == shutdown || $s == error ]] && [ $fw = 0 ]; then
+            fw=1; echo "klipper: $s, trying FIRMWARE_RESTART"
+            rsh 'curl -sf -X POST localhost:7125/printer/firmware_restart >/dev/null' || true
+        fi
         sleep 2
     done
     echo "klipper: NOT ready (state: ${s:-unknown}). Last log lines:"

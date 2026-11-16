@@ -28,9 +28,7 @@ echo "== reproducibility check: toolhead vs stock"
 cmp "$work/repro/toolhead.bin" "$ROOT/stock-firmware/stock-toolhead.bin"
 echo "identical"
 
-declare -A ver start uuid
-start=([toolhead]=0x08002000 [mainboard]=0x08020000)
-uuid=([toolhead]=61755fe321ac [mainboard]=0d1445047cdd)
+declare -A ver   # flash addresses and CAN uuids live in release/flash-board.sh, the one place that uses them
 while read -r board source; do
     case $source in
         stock) cp "$ROOT/stock-firmware/stock-$board.bin" "$stage/firmware/$board.bin"; ver[$board]=$(stock_version "$board") ;;
@@ -85,11 +83,10 @@ json.dump({
     "commit": "$commit",
     "klipper_upstream": "$pin",
     "boards": {
-        b: {"file": "firmware/%s.bin" % b, "version": v, "app_start": s, "canbus_uuid": u,
-            "stock_file": "firmware/stock-%s.bin" % b, "stock_version": sv}
-        for b, v, s, u, sv in [
-            ("toolhead", "${ver[toolhead]}", "${start[toolhead]}", "${uuid[toolhead]}", "$(stock_version toolhead)"),
-            ("mainboard", "${ver[mainboard]}", "${start[mainboard]}", "${uuid[mainboard]}", "$(stock_version mainboard)"),
+        b: {"version": v, "stock_file": "firmware/stock-%s.bin" % b, "stock_version": sv}
+        for b, v, sv in [
+            ("toolhead", "${ver[toolhead]}", "$(stock_version toolhead)"),
+            ("mainboard", "${ver[mainboard]}", "$(stock_version mainboard)"),
         ]
     },
     "apps": {l.split()[0]: {"type": l.split()[1], "source": l.split()[2], "pin": l.split()[4]}

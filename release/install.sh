@@ -120,6 +120,7 @@ restore_host() {
     for d in "$backup"/apps/*/; do if [ -d "$d" ]; then rsync -a --delete "$d" "$HOME/$(basename "$d")/"; fi; done
     for name in $dirty; do git -C "$HOME/$name" stash pop -q || log "$name: local changes kept in git stash"; done
     if [ -d "$backup/zero-config" ]; then rsync -a --delete "$backup/zero-config/" "$STATE/zero-config/"; fi
+    if [ -f "$backup/printer_data_config_get_ip.cfg" ]; then cp -p "$backup/printer_data_config_get_ip.cfg" "$HOME/printer_data/config/get_ip.cfg"; fi
     restart_services || true
     wait_ready || true
 }
@@ -175,15 +176,41 @@ if ! cmp -s zero-config/nginx.conf "$snippet" || ! grep -q "include $snippet;" "
     sudo -n systemctl reload nginx; log "config page: nginx set up at /extended/"
 fi
 
-# Sovol's OTA updater would install its own package over this one; releases come from /extended/ only.
-# It's started at boot by btt_init.sh (rc.local) and waits for the _OTA macro; comment it out, stop it.
+# Sovol's updaters work around this installer (no version check, no rollback); releases come from /extended/
+# only. OTA: ota_service.sh, started at boot by btt_init.sh, installs Sovol's package when _OTA signals it.
+# _MCU_UP / _EXTRUDER_MCU_UP / _EXTRA_MCU_UP: flash a board with whatever image the OTA package left behind.
 boot=/boot/scripts/btt_init.sh
-if [ -n "$(grep -s '^sudo -u sovol ./ota_service.sh' "$boot")" ]; then
-    sudo -n sed -i 's|^sudo -u sovol ./ota_service.sh|# disabled by sovol-zero-extended: &|' "$boot"
-    log "Sovol OTA: disabled at boot"
+if [ -n "$(grep -s 'ota_service\.sh' "$boot")" ]; then
+    sudo -n sed -i '/ota_service\.sh/d' "$boot"; log "Sovol updaters: OTA removed from boot"
 fi
 # the pattern can't match this pkill's own command line (its "\." isn't ".")
-if sudo -n pkill -f '\./ota_service\.sh$'; then log "Sovol OTA: stopped"; fi
+if sudo -n pkill -f '\./ota_service\.sh$'; then log "Sovol updaters: OTA stopped"; fi
+build=$HOME/printer_data/build   # keep flash_can.py: flash-board.sh uses it
+for f in /boot/scripts/ota_service.sh "$HOME/ota_client.sh" "$HOME/pyhelper/ota_process.py" "$build/mcu_update_fw.sh" \
+         "$build/extruder_mcu_update_fw.sh" "$build/extra_mcu_update_fw.sh" "$build/extruder_mcu_klipper.bin"; do
+    if [ -e "$f" ]; then sudo -n rm -f "$f"; log "Sovol updaters: removed $f"; fi
+done
+# their macros, from the live config and from Sovol's copy that the display's factory reset restores
+for cfg in "$HOME/printer_data/config/get_ip.cfg" "$HOME/patch/config/get_ip.cfg"; do
+    [ -f "$cfg" ] || continue
+    cp -p "$cfg" "$backup/$(echo "${cfg#"$HOME"/}" | tr / _)"
+    if python3 - "$cfg" <<'EOF'
+import sys
+drop = {"[gcode_shell_command %s]" % c for c in ("ota", "mcu_up", "extruder_mcu_up", "extra_mcu_up")}
+drop |= {"[gcode_macro %s]" % m for m in ("_OTA", "_MCU_UP", "_EXTRUDER_MCU_UP", "_EXTRA_MCU_UP")}
+lines = open(sys.argv[1], newline="").read().splitlines(True)   # newline="": keep its CRLFs
+out, skip = [], False
+for line in lines:
+    if line.startswith("["):        # a section runs from its header to the next one
+        skip = line.strip() in drop
+    if not skip:
+        out.append(line)
+if len(out) == len(lines):
+    sys.exit(1)                     # nothing to remove: no log line
+open(sys.argv[1], "w", newline="").write("".join(out))
+EOF
+    then log "Sovol updaters: macros removed from ${cfg#"$HOME"/}"; fi
+done
 
 log "installing host code"
 sync_klippy | grep -E '^(>f|\*deleting)' || echo "(no file changes)"

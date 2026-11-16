@@ -4,9 +4,13 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
-- Sovol's OTA updater is removed: install.sh stops it starting at boot (`/boot/scripts/btt_init.sh`) and
-  stops the running copy, and the display menu's OTA entry is gone (patch 0009). Releases are installed from
-  `/extended/` only.
+- Sovol's updaters are removed, so releases are installed from `/extended/` only. That's the OTA service
+  (taken out of `/boot/scripts/btt_init.sh`, stopped, deleted, and its display menu entry dropped by patch
+  0009) and the `_MCU_UP`/`_EXTRUDER_MCU_UP`/`_EXTRA_MCU_UP` board flashers, which bypassed version checks
+  and rollback (`_EXTRUDER_MCU_UP` would put the stock toolhead image back). Their macros are removed from
+  `get_ip.cfg` and from Sovol's copy that factory reset restores; nothing else in the file changes.
+- install.sh's chelper C guard and host-code change log now work: they looked for rsync's remote-transfer
+  marker (`<f`), which a local sync never prints.
 - Built board firmware reports `zx-<hash of the image>` instead of the release version, so a release only
   reflashes a board whose firmware actually changed.
 

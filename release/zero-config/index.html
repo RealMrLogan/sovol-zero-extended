@@ -98,8 +98,13 @@ function renderSetting(key, s) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const umsg = (s, cls) => { const m = $("#update-msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
 
-function loadStatus() {
-  return fetch("api/settings").then((r) => r.json()).then((d) => renderStatus(d.status)).catch(() => {});
+function load() {   // status and settings; again after an install, which can change both
+  return fetch("api/settings").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); })
+    .then((d) => {
+      renderStatus(d.status);
+      $("#settings").replaceChildren(...Object.entries(d.settings).map(([k, s]) => renderSetting(k, s)));
+    })
+    .catch((e) => { $("#settings").replaceChildren(text("div", "Could not load settings: " + e.message, "msg err")); });
 }
 
 function showPending(p) {
@@ -122,7 +127,7 @@ async function follow() {   // poll the install; the page's own server may resta
     await sleep(1500);
   }
   $("#pick").disabled = false;
-  loadStatus();
+  load();
 }
 
 $("#pick").onclick = () => $("#file").click();
@@ -154,12 +159,7 @@ fetch("api/update").then((r) => r.json()).then((d) => {
   else showPending(d.pending);
 }).catch(() => {});
 
-fetch("api/settings").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); })
-  .then((d) => {
-    renderStatus(d.status);
-    $("#settings").replaceChildren(...Object.entries(d.settings).map(([k, s]) => renderSetting(k, s)));
-  })
-  .catch((e) => { $("#settings").replaceChildren(text("div", "Could not load settings: " + e.message, "msg err")); });
+load();
 </script>
 </body>
 </html>
