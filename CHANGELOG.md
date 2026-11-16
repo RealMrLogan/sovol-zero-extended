@@ -2,7 +2,7 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
-## Unreleased
+## v0.2.1
 
 - Sovol's updaters are removed, so releases are installed from `/extended/` only. That's the OTA service
   (taken out of `/boot/scripts/btt_init.sh`, stopped, deleted, and its display menu entry dropped by patch
