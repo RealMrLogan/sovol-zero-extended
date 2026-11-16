@@ -28,6 +28,14 @@
   .choices button:disabled { opacity: .5; cursor: wait; }
   .msg { min-height: 1.5em; margin-top: 8px; font-size: 14px; }
   .msg.ok { color: var(--ok); } .msg.err { color: var(--err); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font: inherit; cursor: pointer; }
+  .btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  .btn:focus-visible, .choices button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  pre { background: #0b0b0b; border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin: 12px 0 0;
+        max-height: 360px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .note { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
 </style>
 </head>
 <body>
@@ -35,6 +43,18 @@
   <header><h1>Sovol Zero Extended</h1><a href="/">Back to Mainsail</a></header>
   <section class="card"><h2>Installed</h2><dl id="status"><dt>Loading…</dt><dd></dd></dl></section>
   <section class="card"><h2>Settings</h2><div id="settings"></div></section>
+  <section class="card" aria-labelledby="update-h">
+    <h2 id="update-h">Update</h2>
+    <p class="note">Install a release zip from GitHub. Boards are only flashed if the release changes their firmware;
+      anything that doesn't come back is rolled back. Don't power off the printer while it runs.</p>
+    <div class="row">
+      <input type="file" id="file" accept=".zip,application/zip" hidden>
+      <button type="button" class="btn secondary" id="pick">Choose release zip…</button>
+      <button type="button" class="btn" id="install" hidden>Install</button>
+    </div>
+    <div class="msg" id="update-msg" role="status" aria-live="polite"></div>
+    <pre id="log" hidden></pre>
+  </section>
 </main>
 <script>
 const $ = (sel) => document.querySelector(sel);
@@ -74,6 +94,65 @@ function renderSetting(key, s) {
   box.append(text("label", s.label), text("p", s.help), choices, msg);
   return box;
 }
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const umsg = (s, cls) => { const m = $("#update-msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
+
+function loadStatus() {
+  return fetch("api/settings").then((r) => r.json()).then((d) => renderStatus(d.status)).catch(() => {});
+}
+
+function showPending(p) {
+  $("#install").hidden = !p;
+  if (p) umsg("Ready to install " + p.version + (p.commit ? " (" + p.commit + ")" : "") + ".");
+}
+
+async function follow() {   // poll the install; the page's own server may restart mid-install, so ride out errors
+  $("#pick").disabled = true; $("#install").hidden = true; $("#log").hidden = false;
+  umsg("Installing…");
+  for (;;) {
+    try {
+      const d = await (await fetch("api/update")).json();
+      $("#log").textContent = d.log; $("#log").scrollTop = $("#log").scrollHeight;
+      if (!d.running && d.result) {
+        if (d.result === "success") umsg("Installed.", "ok"); else umsg("Install failed; see the log. Anything changed was rolled back.", "err");
+        break;
+      }
+    } catch (e) { /* server restarting */ }
+    await sleep(1500);
+  }
+  $("#pick").disabled = false;
+  loadStatus();
+}
+
+$("#pick").onclick = () => $("#file").click();
+$("#file").onchange = async () => {
+  const f = $("#file").files[0]; $("#file").value = "";
+  if (!f) return;
+  $("#pick").disabled = true; $("#install").hidden = true; umsg("Uploading " + f.name + "…");
+  try {
+    const r = await fetch("api/update/upload", { method: "POST", headers: { "Content-Type": "application/zip" }, body: f });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    showPending(d);
+  } catch (e) { umsg("Upload failed: " + e.message, "err"); }
+  $("#pick").disabled = false;
+};
+$("#install").onclick = async () => {
+  $("#install").disabled = true;
+  try {
+    const r = await fetch("api/update/install", { method: "POST" });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    follow();
+  } catch (e) { umsg("Could not start the install: " + e.message, "err"); }
+  $("#install").disabled = false;
+};
+
+fetch("api/update").then((r) => r.json()).then((d) => {
+  if (d.running) follow();
+  else showPending(d.pending);
+}).catch(() => {});
 
 fetch("api/settings").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); })
   .then((d) => {

@@ -47,6 +47,9 @@ both board images, the upstream apps, a manifest and `install.sh`.
 2. GitHub Actions builds the zip in Debian 11 (Sovol's exact compiler) and opens a **draft** release.
    The build fails unless the toolhead firmware still comes out byte-identical to Sovol's stock image.
 3. Test the draft on a printer: `tools/install-release.sh vX.Y.Z`. Publish it on GitHub when it works.
+   It installs through the printer's config page, so a dropped connection doesn't stop it
+   (`tools/install-release.sh --follow` reattaches to the log).
+   Without SSH: download the zip from the release and upload it on `http://<printer>/extended/` (Update).
 
 `install.sh` refuses while printing, checks every file's SHA-256 and each image's start address, backs up
 `klippy/`, restarts Klipper (rolling back if it doesn't come up), and flashes only boards whose running

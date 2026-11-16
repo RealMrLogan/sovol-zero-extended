@@ -2,11 +2,17 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
-## v0.1.2
+## v0.2.0
 
 - Config page at `http://<printer>/extended/`: shows the installed release and board firmware, and has the
   first setting, **screen orientation** (landscape, portrait, and both flipped; rotates touch to match).
   Served by a small `zero-config` service behind nginx, allowed for whoever Moonraker allows.
+- Update from the config page: choose a release zip, check what it is, Install, and watch the log. The
+  install runs as its own systemd job (`zero-install`), so it survives the page's server being updated
+- `tools/install-release.sh` installs through the config page instead of running install.sh in the SSH
+  session, so a dropped connection can't kill an install halfway; `--follow` reattaches.
+  `--force-flash <board>` and `--no-flash` pass through (the API accepts only those). Printers without the
+  page still install over SSH.
 - install.sh retries once with `FIRMWARE_RESTART` when Klipper comes back in shutdown/error (a rare klippy
   startup race on the CAN toolhead left the MCU shut down, which a service restart can't clear)
 
