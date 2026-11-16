@@ -34,9 +34,11 @@ jobs:
           submodules: true
 
       - name: Build release (fails unless the toolhead build is byte-identical to stock)
+        env:
+          VERSION: ${{ inputs.version || github.ref_name }}   # via env, not pasted into the script
         run: |
           git config --global --add safe.directory '*'
-          tools/make-release.sh "${{ inputs.version || github.ref_name }}"
+          tools/make-release.sh "$VERSION"
 
       - name: Upload test build
         if: github.event_name == 'workflow_dispatch'

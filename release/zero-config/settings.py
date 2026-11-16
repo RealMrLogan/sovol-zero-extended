@@ -1,16 +1,16 @@
-# Settings shown on the config page. Each one: label, help, choices (value -> label), get(), set(value);
-# a new option is a new entry in SETTINGS.
+# Settings shown on the config page. Each one: label, help, choices (value -> label), applying (shown while
+# set() runs), get(), set(value); a new option is a new entry in SETTINGS.
 import os, re, subprocess, time
 
 XORG = "/etc/X11/xorg.conf.d/01-dbbian-defaults.conf"   # Sovol's X config: fbdev rotation + touch matrix
 KS_LOG = os.path.expanduser("~/printer_data/logs/KlipperScreen.log")
 
 # orientation as seen by someone facing the screen; Sovol ships "UD" as its landscape
-ORIENTATIONS = {
-    "landscape":         ("UD",     "-1 0 1 0 -1 1 0 0 1"),
-    "portrait":          ("CCW",    "0 -1 1 1 0 0 0 0 1"),
-    "landscape-flipped": ("normal", "1 0 0 0 1 0 0 0 1"),   # fbdev has no "normal": unknown = unrotated
-    "portrait-flipped":  ("CW",     "0 1 0 -1 0 1 0 0 1"),
+ORIENTATIONS = {   # value: (label, X Rotate, touch CalibrationMatrix)
+    "landscape":         ("Landscape",           "UD",     "-1 0 1 0 -1 1 0 0 1"),
+    "portrait":          ("Portrait",            "CCW",    "0 -1 1 1 0 0 0 0 1"),
+    "landscape-flipped": ("Landscape (flipped)", "normal", "1 0 0 0 1 0 0 0 1"),   # fbdev has no "normal": unknown = unrotated
+    "portrait-flipped":  ("Portrait (flipped)",  "CW",     "0 1 0 -1 0 1 0 0 1"),
 }
 ROTATE_RE = re.compile(r'(Option\s+"Rotate"\s+")([^"]*)(")')
 MATRIX_RE = re.compile(r'("CalibrationMatrix"\s+")([^"]*)(")')
@@ -19,11 +19,11 @@ MATRIX_RE = re.compile(r'("CalibrationMatrix"\s+")([^"]*)(")')
 def get_orientation():
     m = ROTATE_RE.search(open(XORG).read())
     rotate = m.group(2) if m else "normal"
-    return next((k for k, (r, _) in ORIENTATIONS.items() if r == rotate), "landscape-flipped")
+    return next((k for k, (_, r, _) in ORIENTATIONS.items() if r == rotate), "landscape-flipped")
 
 
 def set_orientation(value):
-    rotate, matrix = ORIENTATIONS[value]
+    _, rotate, matrix = ORIENTATIONS[value]
     src = open(XORG).read()
     if not ROTATE_RE.search(src) or not MATRIX_RE.search(src):
         raise RuntimeError("%s has no Rotate/CalibrationMatrix lines to change" % XORG)
@@ -60,8 +60,8 @@ SETTINGS = {
     "orientation": {
         "label": "Screen orientation",
         "help": "Rotates the touchscreen and its touch input. The screen restarts to apply it.",
-        "choices": {"landscape": "Landscape", "portrait": "Portrait",
-                    "landscape-flipped": "Landscape (flipped)", "portrait-flipped": "Portrait (flipped)"},
+        "choices": {k: label for k, (label, _, _) in ORIENTATIONS.items()},
+        "applying": "Applying… the screen is restarting",
         "get": get_orientation,
         "set": set_orientation,
     },

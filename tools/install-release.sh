@@ -13,14 +13,17 @@ src=${1:?usage: install-release.sh <tag|file.zip|--follow> [--force-flash board]
 api() { curl -sS --fail-with-body "$@"; }
 
 follow() {   # print the install log as it grows; the page's server restarts mid-install, so ride out errors
-    local seen=0 d log
+    local seen=0 d result
     while :; do
         if d=$(curl -sf "$URL" 2>/dev/null); then
-            log=$(jq_py 'd["log"]' <<<"$d") || log=""
-            [ ${#log} -gt $seen ] && { printf '%s\n' "${log:$seen}"; seen=$((${#log} + 1)); }
-            case $(jq_py 'd["result"] if not d["running"] else ""' <<<"$d") in
+            # print exactly the new part of the log and count it in characters, as the server sends it
+            python3 -c 'import json,sys; sys.stdout.write(json.loads(sys.argv[1])["log"][int(sys.argv[2]):])' "$d" "$seen"
+            seen=$(jq_py 'len(d["log"])' <<<"$d")
+            result=$(jq_py 'd["result"] or ("running" if d["running"] else "none")' <<<"$d")
+            case $result in
                 success) echo "== installed"; return 0 ;;
                 failed) echo "== install FAILED (rolled back; see above)"; return 1 ;;
+                none) echo "no install to follow"; return 1 ;;
             esac
         fi
         sleep 2

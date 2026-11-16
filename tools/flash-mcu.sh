@@ -8,7 +8,8 @@ bin=$B/out/$board.bin
 rsh "mkdir -p $B"
 rsync -t "$ROOT/release/flash-board.sh" "$PRINTER:$B/"
 if [ -n "${2:-}" ]; then
-    rsync -t "$2" "$PRINTER:$B/upload-$board.bin" && bin=$B/upload-$board.bin
+    rsync -t "$2" "$PRINTER:$B/upload-$board.bin"   # own line: a failure here must stop, not flash the last build
+    bin=$B/upload-$board.bin
 fi
 require_idle
 if [ "$board" = mainboard ]; then

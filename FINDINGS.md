@@ -42,7 +42,7 @@ See README.md.
     usbmount, pyhelper, printer_data/build (flash scripts + toolhead bin), kiauh-backups. Older than our 1.4.7 copy.
   - **No Klipper source.** The 2026-06 commits only re-upload a pinout PDF.
 - https://github.com/Sovol3d/klipper (last commit bae68982, 2024-10-29): pre-Zero (SV06/SV08 era), older than the Zero tree.
-- So the Klipper tree pulled from the printer (captured in sovol-klipper/*.patch) is the most complete Zero
+- So the Klipper tree pulled from the printer (captured as what is now `patches/0001-0008`) is the most complete Zero
   source available. Sovol never published it.
 
 ## Stock baseline (2026-11-14)

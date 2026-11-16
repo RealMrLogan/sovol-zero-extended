@@ -71,23 +71,26 @@ function renderSetting(key, s) {
   const msg = text("div", s.error || "", "msg" + (s.error ? " err" : ""));
   const choices = document.createElement("div"); choices.className = "choices";
   choices.setAttribute("role", "group"); choices.setAttribute("aria-label", s.label);
+  const buttons = () => choices.querySelectorAll("button");
+  const setEnabled = (on) => buttons().forEach((x) => (x.disabled = !on));
   for (const [value, label] of Object.entries(s.choices)) {
     const b = text("button", label); b.type = "button";
+    b.dataset.value = value;
     b.setAttribute("aria-pressed", String(value === s.value));
     b.onclick = async () => {
       if (value === s.value) return;
-      choices.querySelectorAll("button").forEach((x) => (x.disabled = true));
-      msg.className = "msg"; msg.textContent = "Applying… the screen is restarting";
+      setEnabled(false);
+      msg.className = "msg"; msg.textContent = s.applying;
       try {
         const r = await fetch("api/settings/" + key, { method: "POST", headers: { "Content-Type": "application/json" },
                                                        body: JSON.stringify({ value }) });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || r.statusText);
         s.value = d.value;
-        choices.querySelectorAll("button").forEach((x, i) => x.setAttribute("aria-pressed", String(Object.keys(s.choices)[i] === s.value)));
+        buttons().forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.value === s.value)));
         msg.className = "msg ok"; msg.textContent = "Applied.";
       } catch (e) { msg.className = "msg err"; msg.textContent = "Failed: " + e.message; }
-      choices.querySelectorAll("button").forEach((x) => (x.disabled = false));
+      setEnabled(true);
     };
     choices.append(b);
   }
@@ -96,7 +99,7 @@ function renderSetting(key, s) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const umsg = (s, cls) => { const m = $("#update-msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
+const setUpdateMsg = (s, cls) => { const m = $("#update-msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
 
 function load() {   // status and settings; again after an install, which can change both
   return fetch("api/settings").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); })
@@ -109,18 +112,18 @@ function load() {   // status and settings; again after an install, which can ch
 
 function showPending(p) {
   $("#install").hidden = !p;
-  if (p) umsg("Ready to install " + p.version + (p.commit ? " (" + p.commit + ")" : "") + ".");
+  if (p) setUpdateMsg("Ready to install " + p.version + (p.commit ? " (" + p.commit + ")" : "") + ".");
 }
 
 async function follow() {   // poll the install; the page's own server may restart mid-install, so ride out errors
   $("#pick").disabled = true; $("#install").hidden = true; $("#log").hidden = false;
-  umsg("Installing…");
+  setUpdateMsg("Installing…");
   for (;;) {
     try {
       const d = await (await fetch("api/update")).json();
       $("#log").textContent = d.log; $("#log").scrollTop = $("#log").scrollHeight;
       if (!d.running && d.result) {
-        if (d.result === "success") umsg("Installed.", "ok"); else umsg("Install failed; see the log. Anything changed was rolled back.", "err");
+        if (d.result === "success") setUpdateMsg("Installed.", "ok"); else setUpdateMsg("Install failed; see the log. The previous release was put back.", "err");
         break;
       }
     } catch (e) { /* server restarting */ }
@@ -134,13 +137,13 @@ $("#pick").onclick = () => $("#file").click();
 $("#file").onchange = async () => {
   const f = $("#file").files[0]; $("#file").value = "";
   if (!f) return;
-  $("#pick").disabled = true; $("#install").hidden = true; umsg("Uploading " + f.name + "…");
+  $("#pick").disabled = true; $("#install").hidden = true; setUpdateMsg("Uploading " + f.name + "…");
   try {
     const r = await fetch("api/update/upload", { method: "POST", headers: { "Content-Type": "application/zip" }, body: f });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || r.statusText);
     showPending(d);
-  } catch (e) { umsg("Upload failed: " + e.message, "err"); }
+  } catch (e) { setUpdateMsg("Upload failed: " + e.message, "err"); }
   $("#pick").disabled = false;
 };
 $("#install").onclick = async () => {
@@ -150,7 +153,7 @@ $("#install").onclick = async () => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || r.statusText);
     follow();
-  } catch (e) { umsg("Could not start the install: " + e.message, "err"); }
+  } catch (e) { setUpdateMsg("Could not start the install: " + e.message, "err"); }
   $("#install").disabled = false;
 };
 

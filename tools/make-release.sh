@@ -89,9 +89,7 @@ json.dump({
             ("mainboard", "${ver[mainboard]}", "$(stock_version mainboard)"),
         ]
     },
-    "apps": {l.split()[0]: {"type": l.split()[1], "source": l.split()[2], "pin": l.split()[4]}
-             for l in open("$ROOT/release/apps.conf") if l.strip() and not l.lstrip().startswith("#")},
-}, open(sys.argv[1], "w"), indent=2)
+}, open(sys.argv[1], "w"), indent=2)   # the app pins ship as apps.conf itself
 EOF
 (cd "$stage" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
 (cd "$dist" && python3 -m zipfile -c "$name.zip" "$name" && sha256sum "$name.zip" > "$name.zip.sha256")

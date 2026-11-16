@@ -80,29 +80,33 @@ while read -r name type _ _ pin services; do
                 { [ -f "apps/$name.bundle" ] && git -C "$dir" fetch -q "$PWD/apps/$name.bundle" zero-pin; } ||
                 git -C "$dir" fetch -q origin "$pin" || true
             git -C "$dir" cat-file -e "$pin^{commit}" || { echo "$name: cannot get commit $pin"; exit 1; }
-            if git -C "$dir" diff --name-only "$have" "$pin" | grep -qE "$DEPS"; then
+            files=$(git -C "$dir" diff --name-only "$have" "$pin")   # not piped into grep -q: SIGPIPE + pipefail
+            if grep -qE "$DEPS" <<<"$files"; then
                 echo "$name: ${pin:0:7} changes its dependencies, which install.sh cannot install yet"; exit 1
             fi
             changed=1; log "$name: ${have:0:7} -> ${pin:0:7}"
         fi
         if ! git -C "$dir" diff --quiet HEAD; then dirty+=" $name"; log "$name: has local changes, will stash them"; fi
-    elif [ -n "$(rsync -rcni --delete --exclude=config.json "apps/$name/" "$dir/")" ]; then
-        changed=1; log "$name: differs from the release's build"
+    else
+        diffs=$(rsync -rcni --delete --exclude=config.json "apps/$name/" "$dir/")
+        if [ -n "$diffs" ]; then changed=1; log "$name: differs from the release's build"; fi
     fi
     if [ $changed = 1 ]; then apps+=("$name"); [ "$services" = - ] || restart+=" $services"; fi
 done < <(grep -v '^\s*#' apps.conf | grep .)
 
-sync_klippy() { rsync -rlptci --delete --exclude='*.pyc' --exclude=__pycache__ --exclude='*.so' "$@" klipper/klippy/ "$KLIPPER/klippy/"; }
+sync_klippy() { rsync -rlptci --delete --exclude='*.pyc' --exclude=__pycache__ --exclude='*.so' --exclude=.version "$@" klipper/klippy/ "$KLIPPER/klippy/"; }
 # shortcut: Sovol disabled klippy's automatic c_helper.so rebuild, so refuse releases that change chelper C
 # until install.sh builds it; ">f" = content differs (".f" = timestamp only)
-if sync_klippy -n | grep -qE '^>f.* chelper/.*\.[ch]$'; then
+pending=$(sync_klippy -n)
+if grep -qE '^>f.* chelper/.*\.[ch]$' <<<"$pending"; then
     echo "this release changes klippy/chelper C code, which install.sh cannot rebuild yet"; exit 1
 fi
 
 prev=$(cat "$STATE/version" 2>/dev/null || echo unknown)
 backup=$STATE/backup/$(date +%Y%m%d-%H%M%S)-from-$prev
 log "backing up klippy/ to $backup"
-mkdir -p "$backup" && cp -a "$KLIPPER/klippy" "$backup/"
+mkdir -p "$backup"
+cp -a "$KLIPPER/klippy" "$backup/"
 ls -1d "$STATE"/backup/*/ | head -n -3 | xargs -r rm -rf          # keep the last 3
 
 restart_services() {   # each on its own, so one bad unit can't stop the others restarting
@@ -110,6 +114,8 @@ restart_services() {   # each on its own, so one bad unit can't stop the others 
     for s in klipper $restart; do sudo -n systemctl restart "$s" || rc=1; done
     return $rc
 }
+# Undoes klippy/, the apps and the config page. Left as installed on purpose: the crowsnest drop-in, the
+# zero-config unit and nginx snippet (both compatible with older releases) and the Sovol updater removal (one-way).
 restore_host() {
     trap - ERR
     log "restoring the previous klippy/ and apps"
@@ -118,12 +124,12 @@ restore_host() {
         while read -r name ref; do git -C "$HOME/$name" checkout -q "$ref" || log "$name: could not return to $ref"; done < "$backup/apps.prev"
     fi
     for d in "$backup"/apps/*/; do if [ -d "$d" ]; then rsync -a --delete "$d" "$HOME/$(basename "$d")/"; fi; done
-    for name in $dirty; do git -C "$HOME/$name" stash pop -q || log "$name: local changes kept in git stash"; done
+    for name in $stashed; do git -C "$HOME/$name" stash pop -q || log "$name: local changes kept in git stash"; done
     if [ -d "$backup/zero-config" ]; then rsync -a --delete "$backup/zero-config/" "$STATE/zero-config/"; fi
-    if [ -f "$backup/printer_data_config_get_ip.cfg" ]; then cp -p "$backup/printer_data_config_get_ip.cfg" "$HOME/printer_data/config/get_ip.cfg"; fi
     restart_services || true
     wait_ready || true
 }
+stashed=""   # apps whose local changes this run stashed: the only stashes restore_host may pop
 # from here on, anything failing unexpectedly puts klippy/ and the apps back before install.sh exits
 trap 'log "unexpected failure, rolling back"; restore_host' ERR
 
@@ -135,13 +141,15 @@ for name in "${apps[@]}"; do   # record every git app's branch/commit before cha
 done
 for name in $dirty; do
     git -C "$HOME/$name" stash push -q -m "sovol-zero-extended $version: local changes"
+    stashed+=" $name"
     log "$name: local changes stashed (see them: git -C ~/$name stash show -p)"
 done
 for name in "${apps[@]}"; do
     if [ "${atype[$name]}" = git ]; then
         git -C "$HOME/$name" checkout -q --detach "${apin[$name]}"
     else
-        mkdir -p "$backup/apps" && cp -a "$HOME/$name" "$backup/apps/"
+        mkdir -p "$backup/apps"
+        cp -a "$HOME/$name" "$backup/apps/"
         rsync -rc --delete --exclude=config.json "apps/$name/" "$HOME/$name/"   # keep the user's config.json
     fi
     log "$name: installed ${apin[$name]:0:12}"
@@ -150,19 +158,22 @@ if [ ${#apps[@]} = 0 ] && [ -z "$dirty" ]; then echo "(all apps already at their
 
 dropin=/etc/systemd/system/crowsnest.service.d/zero-extended.conf
 if [ -f /etc/systemd/system/crowsnest.service ] && ! cmp -s systemd/crowsnest-zero.conf "$dropin"; then
-    sudo -n install -D -m644 systemd/crowsnest-zero.conf "$dropin" && sudo -n systemctl daemon-reload
+    sudo -n install -D -m644 systemd/crowsnest-zero.conf "$dropin"
+    sudo -n systemctl daemon-reload
     log "crowsnest: start delay installed as a systemd drop-in"
 fi
 
 # config page (zero-config/): served by its own service on localhost, reached through nginx at /extended/
 if [ -d "$STATE/zero-config" ]; then cp -a "$STATE/zero-config" "$backup/"; fi
-if [ -n "$(rsync -rci --delete --exclude=__pycache__ zero-config/ "$STATE/zero-config/")" ]; then
+page_changes=$(rsync -rci --delete --exclude=__pycache__ zero-config/ "$STATE/zero-config/")
+if [ -n "$page_changes" ]; then
     restart+=" zero-config"; log "config page: updated"
 fi
 unit=$(sed "s|@USER@|$(id -un)|; s|@HOME@|$HOME|" zero-config/zero-config.service)
 if [ "$unit" != "$(cat /etc/systemd/system/zero-config.service 2>/dev/null)" ]; then
     echo "$unit" | sudo -n tee /etc/systemd/system/zero-config.service >/dev/null
-    sudo -n systemctl daemon-reload && sudo -n systemctl enable -q zero-config
+    sudo -n systemctl daemon-reload
+    sudo -n systemctl enable -q zero-config
     restart+=" zero-config"; log "config page: service installed"
 fi
 site=/etc/nginx/sites-available/mainsail; snippet=/etc/nginx/snippets/zero-extended.conf
@@ -180,7 +191,7 @@ fi
 # only. OTA: ota_service.sh, started at boot by btt_init.sh, installs Sovol's package when _OTA signals it.
 # _MCU_UP / _EXTRUDER_MCU_UP / _EXTRA_MCU_UP: flash a board with whatever image the OTA package left behind.
 boot=/boot/scripts/btt_init.sh
-if [ -n "$(grep -s 'ota_service\.sh' "$boot")" ]; then
+if grep -qs 'ota_service\.sh' "$boot"; then
     sudo -n sed -i '/ota_service\.sh/d' "$boot"; log "Sovol updaters: OTA removed from boot"
 fi
 # the pattern can't match this pkill's own command line (its "\." isn't ".")
@@ -191,6 +202,7 @@ for f in /boot/scripts/ota_service.sh "$HOME/ota_client.sh" "$HOME/pyhelper/ota_
     if [ -e "$f" ]; then sudo -n rm -f "$f"; log "Sovol updaters: removed $f"; fi
 done
 # their macros, from the live config and from Sovol's copy that the display's factory reset restores
+# (backed up for reference only: putting them back would re-add macros calling the scripts deleted above)
 for cfg in "$HOME/printer_data/config/get_ip.cfg" "$HOME/patch/config/get_ip.cfg"; do
     [ -f "$cfg" ] || continue
     cp -p "$cfg" "$backup/$(echo "${cfg#"$HOME"/}" | tr / _)"
@@ -213,7 +225,8 @@ EOF
 done
 
 log "installing host code"
-sync_klippy | grep -E '^(>f|\*deleting)' || echo "(no file changes)"
+synced=$(sync_klippy)   # captured, so a failing rsync triggers the rollback instead of reading as "no changes"
+grep -E '^(>f|\*deleting)' <<<"$synced" || echo "(no file changes)"
 
 services_up() {
     local s
@@ -237,35 +250,49 @@ flash_and_check() {   # board image expected-version
     return $rc
 }
 
+# Boards belong to the install: if one fails, every board flashed so far goes back to its previous image
+# (newest first) and then the host, so old host code never runs against new board firmware.
+declare -A old_img old_ver; flashed=""
+rollback_all() {
+    trap - ERR
+    local b
+    for b in $flashed; do
+        log "$b: flashing back ${old_ver[$b]}"
+        if flash_and_check "$b" "${old_img[$b]}" "${old_ver[$b]}"; then
+            cp "${old_img[$b]}" "$STATE/firmware/$b.bin"; echo "${old_ver[$b]}" > "$STATE/firmware/$b.version"
+            log "$b restored to ${old_ver[$b]}"
+        else
+            log "$b: ROLLBACK FAILED, see RECOVERY.md"
+        fi
+    done
+    restore_host
+}
+
 if [ -n "$flash" ]; then
-    mkdir -p "$STATE/firmware"           # last image flashed to each board, kept for rollback
+    mkdir -p "$STATE/firmware" "$backup/firmware"   # $STATE/firmware: last image flashed to each board
     trap 'sudo -n systemctl start klipper' EXIT
+    trap 'log "unexpected failure, rolling back"; rollback_all' ERR
     # toolhead first and verified before the mainboard, which is also the toolhead's only link to the host
     for b in toolhead mainboard; do
         [[ " $flash " == *" $b "* ]] || continue
         want=$(mf "d['boards']['$b']['version']")
+        # the previous image, copied: $STATE/firmware/$b.bin is overwritten once this board succeeds
         if [ -f "$STATE/firmware/$b.bin" ] && [ "$(cat "$STATE/firmware/$b.version")" = "${was[$b]}" ]; then
-            old_img=$STATE/firmware/$b.bin; old_ver=${was[$b]}
+            cp "$STATE/firmware/$b.bin" "$backup/firmware/$b.bin"; old_ver[$b]=${was[$b]}
         else
-            old_img=$(mf "d['boards']['$b']['stock_file']"); old_ver=$(mf "d['boards']['$b']['stock_version']")
+            cp "$(mf "d['boards']['$b']['stock_file']")" "$backup/firmware/$b.bin"; old_ver[$b]=$(mf "d['boards']['$b']['stock_version']")
         fi
+        old_img[$b]=$backup/firmware/$b.bin
+        flashed="$b $flashed"   # before flashing: a failed flash can leave the board anywhere
         sudo -n systemctl stop klipper
-        if flash_and_check "$b" "firmware/$b.bin" "$want"; then
-            cp "firmware/$b.bin" "$STATE/firmware/$b.bin"; echo "$want" > "$STATE/firmware/$b.version"
-            log "$b now runs $want"
-        else
-            log "$b: new firmware did not come up; flashing back $old_ver"
-            if flash_and_check "$b" "$old_img" "$old_ver"; then
-                log "$b restored to $old_ver"
-            else
-                log "$b: ROLLBACK FAILED, see RECOVERY.md"
-            fi
-            restore_host
-            exit 1
+        if ! flash_and_check "$b" "firmware/$b.bin" "$want"; then
+            log "$b: new firmware did not come up"; rollback_all; exit 1
         fi
+        cp "firmware/$b.bin" "$STATE/firmware/$b.bin"; echo "$want" > "$STATE/firmware/$b.version"
+        log "$b now runs $want"
     done
     sudo -n systemctl start klipper; trap - EXIT
-    wait_ready
+    if ! wait_ready; then log "Klipper did not come back after flashing"; rollback_all; exit 1; fi
 fi
 
 trap - ERR

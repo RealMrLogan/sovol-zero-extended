@@ -2,6 +2,7 @@
 # sovol-zero-extended config page backend. Runs on the printer as the sovol user, on localhost only;
 # nginx serves it at /extended/ after Moonraker's /access/user check (same trust as Mainsail).
 import json, os, re, subprocess, sys
+from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from settings import SETTINGS
 from updates import MAX_UPLOAD, install_args, save_upload, start_install, status, update_status
@@ -30,53 +31,77 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     value, error = None, str(e)
                 out[key] = {"label": s["label"], "help": s["help"], "choices": s["choices"],
-                            "value": value, "error": error}
+                            "applying": s["applying"], "value": value, "error": error}
             self.send(200, {"status": status(), "settings": out})
         elif self.path == "/api/update":
             self.send(200, update_status())
         else:
             self.send(404, {"error": "not found"})
 
-    def do_POST(self):
-        if self.path == "/api/update/upload":
-            length = int(self.headers.get("Content-Length") or 0)
-            if not 0 < length <= MAX_UPLOAD:
-                return self.send(413 if length else 411, {"error": "upload a release zip (max 256 MB)"})
-            try:
-                return self.send(200, save_upload(self.rfile, length))
-            except ValueError as e:
-                return self.send(400, {"error": str(e)})
-            except RuntimeError as e:
-                return self.send(409, {"error": str(e)})
-        if self.path == "/api/update/install":
-            try:
-                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                args = json.loads(body).get("args", []) if body else []
-                if not isinstance(args, list):
-                    raise ValueError("args must be a list")
-                start_install(install_args(list(args)))
-            except (ValueError, AttributeError) as e:
-                return self.send(400, {"error": str(e)})
-            except RuntimeError as e:
-                return self.send(409, {"error": str(e)})
-            except (OSError, subprocess.CalledProcessError) as e:
-                return self.send(500, {"error": str(e)})
-            return self.send(200, update_status())
-        m = re.fullmatch(r"/api/settings/([a-z-]+)", self.path)
-        s = SETTINGS.get(m.group(1)) if m else None
-        if not s:
-            return self.send(404, {"error": "no such setting"})
+    def body_length(self):
         try:
-            value = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))["value"]
+            return int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return -1
+
+    def cross_site(self):
+        """True for a browser request from another site. Moonraker trusts every LAN address, so without
+        this any web page open on the LAN could post a release here and run its install.sh."""
+        origin = self.headers.get("Origin")
+        return origin is not None and urlsplit(origin).netloc != self.headers.get("Host")
+
+    def do_POST(self):
+        if self.cross_site():
+            return self.send(403, {"error": "cross-site request refused"})
+        if self.path == "/api/update/upload":
+            return self.post_upload()
+        if self.path == "/api/update/install":
+            return self.post_install()
+        m = re.fullmatch(r"/api/settings/([a-z-]+)", self.path)
+        if m and m.group(1) in SETTINGS:
+            return self.post_setting(SETTINGS[m.group(1)])
+        self.send(404, {"error": "not found"})
+
+    def post_upload(self):
+        length = self.body_length()
+        if length < 0:
+            return self.send(400, {"error": "bad Content-Length"})
+        if not 0 < length <= MAX_UPLOAD:
+            return self.send(413 if length else 411, {"error": "upload a release zip (max %d MB)" % (MAX_UPLOAD >> 20)})
+        try:
+            self.send(200, save_upload(self.rfile, length))
+        except ValueError as e:
+            self.send(400, {"error": str(e)})
+        except RuntimeError as e:
+            self.send(409, {"error": str(e)})
+
+    def post_install(self):
+        try:
+            body = self.rfile.read(max(self.body_length(), 0))
+            args = json.loads(body).get("args", []) if body else []
+            if not isinstance(args, list):
+                raise ValueError("args must be a list")
+            start_install(install_args(args))
+        except (ValueError, AttributeError) as e:
+            return self.send(400, {"error": str(e)})
+        except RuntimeError as e:
+            return self.send(409, {"error": str(e)})
+        except (OSError, subprocess.CalledProcessError) as e:
+            return self.send(500, {"error": str(e)})
+        self.send(200, update_status())
+
+    def post_setting(self, s):
+        try:
+            value = json.loads(self.rfile.read(max(self.body_length(), 0)))["value"]
         except (ValueError, KeyError, TypeError):
             return self.send(400, {"error": "expected {\"value\": ...}"})
-        if value not in s["choices"]:            # trust boundary: only known values reach set()
+        if not isinstance(value, str) or value not in s["choices"]:   # trust boundary: only known values reach set()
             return self.send(400, {"error": "invalid value"})
         try:
             s["set"](value)
+            self.send(200, {"value": s["get"]()})
         except Exception as e:
-            return self.send(500, {"error": str(e)})
-        self.send(200, {"value": s["get"]()})
+            self.send(500, {"error": str(e)})
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s\n" % (fmt % args))

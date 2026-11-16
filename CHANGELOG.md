@@ -2,6 +2,24 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
+## Unreleased
+
+- Config page: refuses cross-site POSTs. Moonraker trusts every LAN address, so before this any web page open
+  on the LAN could upload and install a release. Malformed requests now get a 400 instead of a dropped
+  connection, and an install that was killed (power loss, reboot) no longer shows as successful.
+- install.sh: if a board fails, every board flashed so far goes back to its previous image before the host is
+  restored, so old host code never runs against new board firmware. Previous images are copied into the
+  backup first (the "last flashed" record is overwritten during the install).
+- install.sh: the chelper and app-dependency guards no longer depend on `grep -q` in a pipeline (SIGPIPE
+  under pipefail could skip them), and a failing rsync now triggers the rollback instead of reading as
+  "no changes". Rollback only pops stashes this run made, and leaves `get_ip.cfg` alone (removing Sovol's
+  updaters is one-way).
+- flash-board.sh: a mainboard already waiting in Katapult (an interrupted flash) can be flashed again;
+  the retry and rollback used to stop at the missing `can0`.
+- tools: `flash-mcu.sh` stops if uploading the image fails (it used to flash the last build instead),
+  `install-release.sh --follow` prints the log exactly and stops when there's nothing to follow, and
+  `deploy-host.sh` warns that chelper C edits don't take effect.
+
 ## v0.2.1
 
 - Sovol's updaters are removed, so releases are installed from `/extended/` only. That's the OTA service

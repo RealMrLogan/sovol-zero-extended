@@ -30,10 +30,12 @@ if [ "$board" = toolhead ]; then
     echo "toolhead Katapult uuid: $katapult"
     $FLASH -i can0 -u "$katapult" -f "$bin"
 else
-    $FLASH -i can0 -u $uuid -r
+    # a mainboard already in Katapult (e.g. an interrupted flash) has no can0 to send the request on
+    katapult_dev() { ls /dev/serial/by-id/*katapult_stm32h750* 2>/dev/null; }
+    katapult_dev >/dev/null || $FLASH -i can0 -u $uuid -r
     dev=
     for _ in $(seq 30); do
-        dev=$(ls /dev/serial/by-id/*katapult_stm32h750* 2>/dev/null) && break
+        dev=$(katapult_dev) && break
         sleep 0.5
     done
     [ -n "$dev" ] || { echo "mainboard did not enter Katapult"; exit 1; }

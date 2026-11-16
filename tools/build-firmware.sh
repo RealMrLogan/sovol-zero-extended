@@ -4,7 +4,7 @@
 # Writes <out-dir>/<board>.bin and <board>.dict, prints the stamped version.
 set -euo pipefail
 cfg=$(cd "$(dirname "$0")/../configs" && pwd)/$2.config
-[ -f "$cfg" ] || { echo "no config for board '$2'"; exit 1; }
+[ -f "$cfg" ] || { echo "no config for board '$2'" >&2; exit 1; }   # stdout is the version callers capture
 tree=$(cd "$1" && pwd); board=$2; mkdir -p "$3"; out=$(cd "$3" && pwd); ver=$4
 
 tmp=$(mktemp -d)
