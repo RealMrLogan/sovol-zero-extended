@@ -4,6 +4,9 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- Upstream apps: Mainsail 2.13.2 → 2.19.0; mainsail-config → `ff3869a` (jogging from Mainsail no longer leaves
+  the printer in relative or absolute mode); crowsnest 4.1.9 → 4.2.0 (`cf936da`, fixes only). KlipperScreen's
+  source now points at its new home, github.com/KlipperScreen/KlipperScreen (same code).
 - Config page: a Calibration section runs input shaping, a CoreXY belt check (both belts' resonance
   spectra, graphed, with a verdict) and bed/nozzle heater PID tuning, and saves results with Klipper's
   SAVE_CONFIG (after a restart, so Sovol's leftover per-print eddy calibration isn't saved with them). It

@@ -11,7 +11,7 @@ dictionaries). "Inferred" marks what was read in code but not run.
 |---|---|---|---|
 | mainsail-config | `e57810d` (v1.2.1) | `ff3869a621db17ce3ef660adbbd3fa321995ac42` | none |
 | Mainsail | v2.13.2 zip | v2.19.0 zip, sha256 `c4d9d96f89851c6ae0709c2f20725447f3fe8c57cf193869b0083441bd93378a` | none |
-| crowsnest | `d75a3ae` (v4.1.9-1) | v5 (`436042452f564f3d737e3b980a213f849a8a0562` = v5.0.12); v4.2.0 `55a0e0bed12b3b0924f9a25c5f1058dba00a0998` as a stepping stone | apt + venv in install.sh |
+| crowsnest | `d75a3ae` (v4.1.9-1) | v5 (`436042452f564f3d737e3b980a213f849a8a0562` = v5.0.12); master `cf936dabdcf6a3d1eb0138d8eea9044745b40db6` (v4.2.0 + a changelog commit) as a stepping stone | apt + venv in install.sh |
 | moonraker-obico | `4c0b7b6` | **removed** (not used) | removal steps below |
 | moonraker-timelapse | `c7fff11` | `c7fff11` (upstream `main` hasn't moved) | none |
 | Moonraker | `4e00a07` (v0.9.3-1) | `b559b9a81161f958a43c2f527b6ad96f73310d5d` (v0.11.0+4) | pip deps in install.sh |
@@ -48,6 +48,10 @@ The printer's pip is 20.3.4. Check it accepts `manylinux_2_28` wheels (sdbus for
 
 ## Step 1: bumps with no new requirements (one release)
 
+In progress (2026-11-16): pins set in `release/apps.conf`; rechecked, no newer targets. The crowsnest
+bump changes `tools/libs/pkglist-*.sh` (adds `pkg-config`, only for building ustreamer); its runtime
+scripts need nothing the printer lacks.
+
 - **mainsail-config → `ff3869a`.** Only adds `_CLIENT_LINEAR_MOVE`, which Mainsail ≥2.13 detects and
   uses for jog/extrude/move-to, so a jog no longer leaves G90/G91 changed. Works with old and new Klipper
   (`client.cfg` reads only `.x/.y/.z` and long-standing fields). Sovol's `Macro.cfg` still overrides
@@ -55,7 +59,7 @@ The printer's pip is 20.3.4. Check it accepts `manylinux_2_28` wheels (sdbus for
 - **Mainsail → v2.19.0.** `minMoonrakerVersion` (v0.8.0-306) and `minKlipperVersion` (v0.11.0-257) are
   unchanged since 2.13.2; no new Moonraker RPC methods; nothing marked breaking in 2.14 to 2.19;
   `config.json` is the upstream default (kept anyway).
-- **crowsnest → v4.2.0.** Fixes only (46 commits). `bin/build.sh` now targets ustreamer v6.36 but a pull
+- **crowsnest → master `cf936da`** (v4.2.0 plus a changelog-only commit, 2026-04-17). Fixes only (46 commits). `bin/build.sh` now targets ustreamer v6.36 but a pull
   doesn't rebuild; the printer keeps its v6.10 binary (inferred to work; it only logs "update available").
   master is frozen at v4.2.0; upstream's default branch is now `v5`.
 - **KlipperScreen URL:** the repo moved to `https://github.com/KlipperScreen/KlipperScreen` (same history).
