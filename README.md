@@ -1,39 +1,56 @@
 # sovol-zero-extended
 
-Community firmware for the Sovol Zero, now that Sovol's own (1.4.7) is frozen.
-This repo is the source of truth: **upstream Klipper, pinned and unmodified, plus Sovol's changes as a patch series.**
-The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the same way, unmodified, in `release/apps.conf`.
+Unofficial firmware for the Sovol Zero, built on Sovol's frozen 1.4.7.
 
-- `klipper/`: submodule, upstream [Klipper3d/klipper](https://github.com/Klipper3d/klipper) pinned at `faa89be8` (what Sovol based 1.4.7 on)
-- `patches/`: Sovol's changes (0001-0008, less 0005: an unused pressure probe module), split by feature, then ours (0009 on), applied in order on top of the pin. `sovol-commit-log.txt` keeps Sovol's original commit messages.
-- `configs/`: build settings for each board (`toolhead.config`, `mainboard.config`)
-- `tools/`: build, deploy and flash over SSH
-- `FINDINGS.md`: what's on the printer and what Sovol changed
-- `RECOVERY.md`: what the installer recovers from by itself, and what to do by hand
-- Stock 1.4.7 reference (from the recovery image), kept in git at the tag `sovol-stock-reference`:
-  `sovol-host/` (Sovol's scripts, services and system files outside Klipper) and `stock-config/config/`
-  (stock printer config). Read with `git show sovol-stock-reference:<path>`, search with
-  `git grep <text> sovol-stock-reference`.
-- `stock-firmware/`: stock board images (mainboard read back from the board) and their version strings
-- `release/`: what goes in a release zip (`install.sh`, `sovol-cleanup.sh`, `flash-board.sh`), `boards.conf`, `apps.conf` and
-  `systemd/` (the crowsnest start-delay drop-in)
-- `release/zero-config/`: the config page at `http://<printer>/extended/` (stdlib Python server, one page, nginx snippet).
-  Settings live in `SETTINGS` in `settings.py` (each has choices plus a get/set; add new options there), updates in `updates.py`, HTTP routes in `server.py`.
+> [!WARNING]
+> **Pre-release. Use at your own risk; YMMV.** This is a personal project, not affiliated with or supported by
+> Sovol, and tested on one printer. Installs check files, refuse during a print and roll back on failure, but a
+> bad install can still leave the printer needing manual recovery (see [Recovery](#recovery)), up to
+> reflashing the eMMC with an adapter. No warranty (GPLv3). Read `CHANGELOG.md` before installing.
 
-## Workflow
+## What it changes
+- **Config page** at `http://<printer>/extended/`: screen orientation, X/Y motor current, an acceleration cap,
+  input shaping, a belt check, PID tuning, and installing releases from a zip.
+- **Upstream apps**, unmodified and pinned in `release/apps.conf`, newer than stock: Moonraker, KlipperScreen,
+  Mainsail, crowsnest, mainsail-config. Their Python packages and the few system packages they need ship in
+  the release and install offline.
+- **Removed:** Sovol's OTA updater and board flashers, and moonraker-obico.
+- **Unchanged so far:** Klipper is Sovol's 1.4.7 (upstream `faa89be8` plus Sovol's patches), and both boards
+  run Sovol's stock firmware. Moving to current Klipper is the next step (`UPSTREAMS.md`).
+
+## Install
+From a computer that can `ssh sovol@<printer>`, with this repo checked out:
+```sh
+PRINTER=sovol@<printer> tools/install-release.sh <tag|file.zip>   # tag: needs gh
+```
+Once a release is installed, later ones can also be uploaded on the config page (Update).
+`install.sh` refuses while printing, verifies every file, installs host code, apps and packages, flashes only
+boards whose firmware changed, and rolls everything back if Klipper or a board doesn't come back.
+What it can't undo by itself is in `RECOVERY.md`.
+
+## Layout
+- `klipper/`: upstream Klipper submodule at `faa89be8`; `patches/`: Sovol's changes split by feature, then ours
+  (0009 on). 0005 (an unused pressure probe module) was dropped.
+- `release/`: the installer and what it installs: `apps.conf` (app pins), `debs.conf` (system packages),
+  `boards.conf` (stock or built firmware per board), `zero-config/` (the config page).
+- `tools/`: build, test, release, deploy and flash over SSH. `tests/`: run by `tools/test.sh`.
+- `stock-firmware/`: Sovol's board images, for rollback and the CI byte-identical check.
+- `FINDINGS.md`: what Sovol changed. `UPSTREAMS.md`: the update plan. `RECOVERY.md`: recovery.
+- Stock 1.4.7 files (Sovol's scripts, services, config) are at the tag `sovol-stock-reference`
+  (`git show sovol-stock-reference:<path>`).
+
+## Development
 ```sh
 git submodule update --init
-tools/setup.sh                # work/ = klipper pin + patches/, one commit per patch (gitignored)
-# edit in work/ ...
-tools/deploy-host.sh          # host Python (work/klippy) -> printer, restart Klipper. No flashing
+tools/setup.sh                # work/ = Klipper pin + patches/, one commit per patch
+tools/deploy-host.sh          # work/klippy -> printer, restart Klipper (no flashing)
 tools/build-mcu.sh toolhead   # build board firmware on the printer (Sovol's gcc 8.3.1)
 tools/flash-mcu.sh toolhead   # flash over Katapult; refuses while printing or on a wrong start address
-# commit the fix inside work/, then:
-tools/export-patches.sh       # rewrite patches/ from work/'s commits
+tools/export-patches.sh       # commit in work/, then rewrite patches/
+tools/test.sh                 # all tests and shellcheck (CI runs it too)
 ```
-`mainboard` works the same way but asks for confirmation: it is also the USB-to-CAN bridge, so a bad
-image cuts off both boards (Katapult itself survives). Flash the toolhead first.
-Set `PRINTER=user@host` if the printer isn't at `sovol@192.168.1.130`.
+Flash the toolhead first: the mainboard is also the USB-to-CAN bridge, so a bad mainboard image cuts off
+both boards (Katapult survives). `PRINTER` defaults to `sovol@192.168.1.130`.
 
 | Board | Chip | Link | Katapult | App start |
 |---|---|---|---|---|
@@ -41,48 +58,15 @@ Set `PRINTER=user@host` if the printer isn't at `sovol@192.168.1.130`.
 | toolhead `[mcu extruder_mcu]` | STM32F103xE, 8 MHz | CAN 1 Mbit/s | 8 KiB | `0x08002000` |
 
 ## Releases
-Versions are `vMAJOR.MINOR.PATCH` (`-rc.N` for test builds). Each release is one zip with the host code,
-both board images, the upstream apps, a manifest and `install.sh`.
-
-**Nightly:** every push to `main` replaces the `nightly` prerelease with a build of that commit, versioned
-automatically from `git describe` (e.g. `v0.2.1-3-gabc1234`: 3 commits after v0.2.1). It's untested and for
-test printers only: `tools/install-release.sh nightly`. Versioned releases are the public ones:
-
-1. Add a `## vX.Y.Z` section to `CHANGELOG.md`, commit, then `git tag vX.Y.Z && git push origin main vX.Y.Z`.
-2. GitHub Actions builds the zip in Debian 11 (Sovol's exact compiler) and opens a **draft** release.
-   The build fails unless the toolhead firmware still comes out byte-identical to Sovol's stock image.
-3. Test the draft on a printer: `tools/install-release.sh vX.Y.Z`. Publish it on GitHub when it works.
-   It installs through the printer's config page, so a dropped connection doesn't stop it
-   (`tools/install-release.sh --follow` reattaches to the log).
-   Without SSH: download the zip from the release and upload it on `http://<printer>/extended/` (Update).
-
-`install.sh` refuses while printing, checks every file's SHA-256, backs up `klippy/`, restarts Klipper
-(rolling back if it doesn't come up), and flashes only boards whose running firmware version differs from
-the release (`--force-flash <board>` / `--no-flash` override). `flash-board.sh` refuses an image with a wrong
-start address. If a board doesn't come back on the expected version, every board flashed so far goes back to
-its previous image, then the host; see `RECOVERY.md`.
-Upstream apps (`release/apps.conf`) are put on their pins the same way: git apps are checked out at the
-pinned commit (local edits are stashed, not lost), Mainsail is replaced by the pinned official release zip
-(keeping `config.json`), and any failure restores them with `klippy/`. To upgrade an app, change its pin;
-the zip then carries a git bundle from Sovol's stock commit to the pin, so installs don't need the network.
-When a pin changes an app's Python requirements (the pip column), the zip carries wheels built for the
-printer (`tools/build-wheels.sh`), installed offline into the app's venv, which is backed up and restored on
-rollback. A pin that changes system packages is refused at build time unless listed in `release/sysdeps-checked`
-after a check by hand; packages the printer lacks are shipped as Debian's own `.deb`s (`release/debs.conf`,
-pinned by sha256), installed offline only if apt's simulation finds nothing else needed, and purged on rollback.
-install.sh also keeps Moonraker's and KlipperScreen's service setup as their upstream installers write it now.
-`release/boards.conf` picks per board whether a release ships the stock image or one built from `patches/`.
-Build locally on the printer: `TREE=<patched tree> tools/make-release.sh vX.Y.Z`.
-
-## Official Sovol resources
-- Wiki (firmware, recovery image, manuals, changelog): https://wiki.sovol3d.com/en/sovol-zero
-- Open-source hardware files (pinouts, STEP models): https://github.com/Sovol3d/SOVOL-ZERO
+CI builds every push to `main` as the `nightly` prerelease (untested, test printers only). For a release:
+add a `## vX.Y.Z` section to `CHANGELOG.md`, tag `vX.Y.Z` and push; CI builds a draft (in Debian 11, failing
+unless the toolhead image is byte-identical to stock). Install the draft on a printer, then publish it.
+App pins that change Python or system packages need wheels (`tools/build-wheels.sh`, built in CI) or an entry
+in `release/debs.conf` and `release/sysdeps-checked`; `tools/make-release.sh` refuses otherwise.
 
 ## Recovery
-To restore stock firmware, use the official image from the wiki above
-(`H616_2.3.3_debian_sovol-zero-1.4.7.zip`, flashed with an eMMC adapter).
-This repo's `sovol-1.4.7-backup` release keeps a copy of that same file, only as a backup in case
-Sovol's link goes away. SHA-256 of the zip:
-`933a3e596370dc6d64ac30517ca9ccfd9276b4247363f7b1178666c89e9fb97e`.
-Stock toolhead firmware: `tools/flash-mcu.sh toolhead stock-firmware/stock-toolhead.bin`.
-Stock mainboard firmware: `tools/flash-mcu.sh mainboard stock-firmware/stock-mainboard.bin` (see `stock-firmware/README.md`).
+- Stock firmware: Sovol's eMMC image from the [wiki](https://wiki.sovol3d.com/en/sovol-zero)
+  (`H616_2.3.3_debian_sovol-zero-1.4.7.zip`, SHA-256 `933a3e596370dc6d64ac30517ca9ccfd9276b4247363f7b1178666c89e9fb97e`),
+  flashed with an eMMC adapter. Keep a copy: this repo doesn't host it.
+- Stock board firmware: `tools/flash-mcu.sh toolhead|mainboard stock-firmware/stock-<board>.bin`.
+- Hardware files (pinouts, STEP): https://github.com/Sovol3d/SOVOL-ZERO

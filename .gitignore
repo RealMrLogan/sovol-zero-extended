@@ -1,6 +1,6 @@
 # local working copies (work/ is rebuilt by tools/setup.sh)
 work/
-# too big for git: published as a GitHub release asset instead (the `sovol-1.4.7-backup` release; see README, Recovery)
+# eMMC images: too big for git (Sovol's recovery image is on its wiki; see README, Recovery)
 *.img
 *.img.zst
 dist/

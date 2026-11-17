@@ -54,7 +54,7 @@ ssh sovol@<printer> 'rsync -a --delete ~/zero-extended/backup/<folder>/klippy/ ~
 ```
 
 **No SSH, or the Linux system is broken**
-Reflash the eMMC with Sovol's 1.4.7 recovery image (wiki, or this repo's `sovol-1.4.7-backup` release) using an
+Reflash the eMMC with Sovol's 1.4.7 recovery image (from the wiki, see README) using an
 eMMC adapter. That restores stock everything; then reinstall a release.
 
 ## Not covered in software
