@@ -81,7 +81,7 @@ cp "$ROOT/release/apps.conf" "$stage/"
 cp -r "$ROOT/release/systemd" "$ROOT/release/zero-config" "$stage/"
 find "$stage/zero-config" -name __pycache__ -prune -exec rm -rf {} +
 
-cp "$ROOT/release/install.sh" "$ROOT/release/flash-board.sh" "$stage/"
+cp "$ROOT/release/install.sh" "$ROOT/release/sovol-cleanup.sh" "$ROOT/release/flash-board.sh" "$stage/"
 chmod +x "$stage"/*.sh
 
 commit=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)

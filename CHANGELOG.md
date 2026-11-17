@@ -4,6 +4,9 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- install.sh: the one-way removals of Sovol's leftovers (its updaters, Obico) moved to `sovol-cleanup.sh`,
+  called at the same points, so install.sh stays the install flow. Patch 0010 also drops the "Install Obico"
+  name from the stock menu's code.
 - Klipper: Sovol's pressure probe module (patch 0005, `probe_pressure.py`) is removed. Sovol stopped using it
   in 1.4.2 and no config loads it; the next install deletes it from `~/klipper/klippy/extras/`.
 - Logging: the config page writes `~/printer_data/logs/zero-config.log` (listed in Mainsail with Klipper's

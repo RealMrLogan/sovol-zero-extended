@@ -15,7 +15,7 @@ The other upstream apps (Moonraker, Mainsail, KlipperScreen, ...) are pinned the
   (stock printer config). Read with `git show sovol-stock-reference:<path>`, search with
   `git grep <text> sovol-stock-reference`.
 - `stock-firmware/`: stock board images (mainboard read back from the board) and their version strings
-- `release/`: what goes in a release zip (`install.sh`, `flash-board.sh`), `boards.conf`, `apps.conf` and
+- `release/`: what goes in a release zip (`install.sh`, `sovol-cleanup.sh`, `flash-board.sh`), `boards.conf`, `apps.conf` and
   `systemd/` (the crowsnest start-delay drop-in)
 - `release/zero-config/`: the config page at `http://<printer>/extended/` (stdlib Python server, one page, nginx snippet).
   Settings live in `SETTINGS` in `settings.py` (each has choices plus a get/set; add new options there), updates in `updates.py`, HTTP routes in `server.py`.

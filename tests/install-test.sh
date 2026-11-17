@@ -33,7 +33,7 @@ setup() {
     cp -a "$H" "$t/orig"
 
     mkdir -p "$REL/klipper/klippy" "$REL/apps/mainsail"
-    cp -r "$REPO"/release/{install.sh,flash-board.sh,apps.conf,systemd,zero-config} "$REL/"
+    cp -r "$REPO"/release/{install.sh,sovol-cleanup.sh,flash-board.sh,apps.conf,systemd,zero-config} "$REL/"
     find "$REL" -name __pycache__ -prune -exec rm -rf {} +
     echo new > "$REL/klipper/klippy/klippy.py"
     echo new > "$REL/apps/mainsail/index.html"

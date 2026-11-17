@@ -4,10 +4,12 @@ Date: Mon, 16 Nov 2026 20:15:00 -0700
 Subject: [PATCH] display: drop the Obico menu entries
 
 moonraker-obico is removed from the printer. These entries read its
-OBICO_LINK_STATUS macro, which is removed with it.
+OBICO_LINK_STATUS macro, which is removed with it; menu.py no longer
+special-cases the "Install Obico" item.
 ---
  klippy/extras/display/menu.cfg | 25 -------------------------
- 1 file changed, 25 deletions(-)
+ klippy/extras/display/menu.py  |  2 +-
+ 2 files changed, 1 insertion(+), 26 deletions(-)
 
 diff --git a/klippy/extras/display/menu.cfg b/klippy/extras/display/menu.cfg
 index 9bcf0f730..c8cbb84a6 100755
@@ -45,3 +47,16 @@ index 9bcf0f730..c8cbb84a6 100755
  [menu __main __info]
  type: list
  enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
+diff --git a/klippy/extras/display/menu.py b/klippy/extras/display/menu.py
+index 22f1a37d6..76ef127b2 100644
+--- a/klippy/extras/display/menu.py
++++ b/klippy/extras/display/menu.py
+@@ -975,7 +975,7 @@ class MenuManager:
+                     if name == "Calibrate Zoffset":
+                         self.printer.send_event("klippy:start_print")
+                         self.gcode.run_script("_Delay_Calibrate")
+-                if name in ["Load Fil", "Unload Fil", "Tune Hotend PID", "Tune Hotbed PID", "Confirm", "Install Obico"]:
++                if name in ["Load Fil", "Unload Fil", "Tune Hotend PID", "Tune Hotbed PID", "Confirm"]:
+                     self.back()
+                     self.back()
+                     self.back()
