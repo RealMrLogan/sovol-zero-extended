@@ -14,6 +14,7 @@ AUTOSAVE='#*# <---------------------- SAVE_CONFIG ---------------------->'
 fail() { echo "FAIL: $*"; exit 1; }
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$BIN/$1"; chmod +x "$BIN/$1"; }
+sign_release() { (cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS); }
 
 setup() {
     rm -rf "${t:?}"/*
@@ -90,7 +91,7 @@ EOF
     if [ -z "${NOWHEELS:-}" ]; then mkdir -p "$REL/apps/wheels"; touch "$REL/apps/wheels/tornado-2-py3-none-any.whl"; fi
     mkdir -p "$REL/debs"; touch "$REL/debs/fakepkg_1.0_arm64.deb"
     echo "fakepkg 1.0 - https://example.invalid/fakepkg_1.0_arm64.deb" > "$REL/debs.conf"
-    (cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
+    sign_release
 
     # Moonraker: Klipper's state and the print state come from FAKE_KLIPPER and FAKE_PRINT. FAKE_PAIRED: as
     # with Klipper master, the host only works with its own toolhead firmware (new klippy: t, old: t0);
@@ -323,7 +324,7 @@ unset FLASH FAKE_PAIRED
 echo "== boards: one that flashes but runs the wrong version goes back, with the others"
 setup; export FLASH=1
 sed -i 's/"version": "m"/"version": "x"/' "$REL/manifest.json"
-(cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
+sign_release
 [ "$(install ready standby)" = 1 ] || fail "install succeeded with a board on the wrong version"
 unset FLASH
 has "$t/fw/toolhead" t0; has "$t/fw/mainboard" m0; same klipper/klippy/klippy.py

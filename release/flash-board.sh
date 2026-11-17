@@ -14,17 +14,17 @@ esac
 
 # a wrong start address makes the board unbootable: refuse images whose reset vector is outside the app area,
 # or that don't fit in it (a mainboard image's vector lies past the toolhead's flash)
-rv=$(od -An -tx4 -j4 -N4 "$bin" | tr -d ' \n')
+rv=$(od -An -tx4 -j4 -N4 "$bin" | tr -d ' \n'); size=$(stat -c %s "$bin")
 if (( 16#$rv < start || 16#$rv >= end )); then
     echo "REFUSING $bin: reset vector 0x$rv is not in the $board app area ($start-$end)"; exit 1
 fi
-if (( start + $(stat -c %s "$bin") > end )); then
-    echo "REFUSING $bin: $(stat -c %s "$bin") bytes don't fit in the $board app area ($start-$end)"; exit 1
+if (( start + size > end )); then
+    echo "REFUSING $bin: $size bytes don't fit in the $board app area ($start-$end)"; exit 1
 fi
 
 if systemctl is-active -q klipper; then echo "stop Klipper first"; exit 1; fi
 
-echo "flashing $board ($(stat -c %s "$bin") bytes, reset vector 0x$rv)"
+echo "flashing $board ($size bytes, reset vector 0x$rv)"
 if [ "$board" = toolhead ]; then
     # Sovol's firmware pins Klipper's CAN uuid; Katapult answers on the chip's real one (unique per board), so find it
     $FLASH -i can0 -u $uuid -r
