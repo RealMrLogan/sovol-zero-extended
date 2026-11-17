@@ -85,10 +85,16 @@ EOF
     echo "fakepkg 1.0 - https://example.invalid/fakepkg_1.0_arm64.deb" > "$REL/debs.conf"
     (cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
 
-    # Moonraker: Klipper's state and the print state come from FAKE_KLIPPER and FAKE_PRINT
+    # Moonraker: Klipper's state and the print state come from FAKE_KLIPPER and FAKE_PRINT. FAKE_PAIRED: as
+    # with Klipper master, the host only works with its own toolhead firmware (new klippy: t, old: t0)
     stub curl 'for a; do url=$a; done
+state=$FAKE_KLIPPER
+if [ -n "${FAKE_PAIRED:-}" ]; then
+    [ "$(cat "$HOME/klipper/klippy/klippy.py")" = new ] && want=t || want=t0
+    [ "$(cat "$FAKE_FW/toolhead")" = "$want" ] || state=error
+fi
 case $url in
-    *printer/info) echo "{\"result\": {\"state\": \"$FAKE_KLIPPER\"}}" ;;
+    *printer/info) echo "{\"result\": {\"state\": \"$state\"}}" ;;
     *print_stats) echo "{\"result\": {\"status\": {\"print_stats\": {\"state\": \"$FAKE_PRINT\"}}}}" ;;
     *query?mcu%20extruder_mcu) echo "{\"result\": {\"status\": {\"mcu extruder_mcu\": {\"mcu_version\": \"$(cat "$FAKE_FW/toolhead")\"}}}}" ;;
     *query?mcu) echo "{\"result\": {\"status\": {\"mcu\": {\"mcu_version\": \"$(cat "$FAKE_FW/mainboard")\"}}}}" ;;
@@ -280,5 +286,15 @@ unset FLASH FAKE_FLASH_FAIL
     fail "flashed: $(tr '\n' ' ' < "$t/flash.log")"
 has "$t/fw/toolhead" t0; has "$t/fw/mainboard" m0
 same klipper/klippy/klippy.py; [ ! -e "$H/zero-extended/version" ] || fail "version recorded for a failed install"
+
+echo "== boards: a host that needs the new toolhead firmware is checked after flashing, and rolled back with it"
+setup; export FLASH=1 FAKE_PAIRED=1
+[ "$(install ready standby)" = 0 ] || { cat "$t/out"; fail "paired install failed"; }
+has "$t/fw/toolhead" t; has "$H/klipper/klippy/klippy.py" new
+setup; export FAKE_FLASH_FAIL=mainboard
+[ "$(install ready standby)" = 1 ] || fail "paired install succeeded with a failed flash"
+unset FLASH FAKE_FLASH_FAIL FAKE_PAIRED
+has "$t/fw/toolhead" t0; has "$t/fw/mainboard" m0; same klipper/klippy/klippy.py
+has "$t/out" "toolhead restored to t0"; lacks "$t/out" "ROLLBACK FAILED"
 
 echo "install-test ok"

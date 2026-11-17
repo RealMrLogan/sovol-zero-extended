@@ -302,7 +302,9 @@ services_up() {
         echo "$s is not running"; return 1
     done
 }
-if ! restart_services || ! wait_ready || ! services_up; then
+# with boards to flash, the new host may not work with their old firmware (Klipper master and Sovol's
+# toolhead), so Klipper is checked once they're flashed
+if ! restart_services || { [ -z "$flash" ] && ! wait_ready; } || ! services_up; then
     log "Klipper or an app did not come back"; restore_host; exit 1
 fi
 
@@ -318,21 +320,26 @@ flash_and_check() {   # board image expected-version
 }
 
 # Boards belong to the install: if one fails, every board flashed so far goes back to its previous image
-# (newest first) and then the host, so old host code never runs against new board firmware.
+# (newest first), then the host. Klipper checks them only once all are back, as host and boards may only
+# work as a set.
 declare -A old_img old_ver; flashed=""
 rollback_all() {
     trap - ERR
     local b
+    sudo -n systemctl stop klipper
     for b in $flashed; do
         log "$b: flashing back ${old_ver[$b]}"
-        if flash_and_check "$b" "${old_img[$b]}" "${old_ver[$b]}"; then
+        if ./flash-board.sh "$b" "${old_img[$b]}" || ./flash-board.sh "$b" "${old_img[$b]}"; then
             cp "${old_img[$b]}" "$STATE/firmware/$b.bin"; echo "${old_ver[$b]}" > "$STATE/firmware/$b.version"
-            log "$b restored to ${old_ver[$b]}"
         else
-            log "$b: ROLLBACK FAILED, see RECOVERY.md"
+            log "$b: flashing back failed"
         fi
     done
-    restore_host
+    restore_host   # restarts Klipper and waits for it
+    for b in $flashed; do
+        if [ "$(running_version "$b")" = "${old_ver[$b]}" ]; then log "$b restored to ${old_ver[$b]}"
+        else log "$b: ROLLBACK FAILED, see RECOVERY.md"; fi
+    done
 }
 
 if [ -n "$flash" ]; then
