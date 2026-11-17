@@ -36,7 +36,7 @@ setup() {
     mkdir -p "$H/printer_data/systemd" "$H/KlipperScreen/scripts" "$t/dpkg"
     printf 'MOONRAKER_ARGS="%s/moonraker/moonraker/moonraker.py -d %s/printer_data"\n' "$H" "$H" > "$H/printer_data/systemd/moonraker.env"
     printf '[Service]\nUser=sovol\n' > "$R/etc/systemd/system/KlipperScreen.service"
-    printf '[Service]\nUser=KS_USER\nEnvironment="KS_XCLIENT=KS_ENV/bin/python KS_DIR/screen.py" BACKEND=KS_BACKEND\nPAMName=%%u\n' \
+    printf '[Service]\nUser=KS_USER\nEnvironment="KS_XCLIENT=KS_ENV/bin/python KS_DIR/screen.py" BACKEND=KS_BACKEND\nExecStartPost=+chvt 7\nPAMName=%%u\n' \
         > "$H/KlipperScreen/scripts/KlipperScreen.service"
     if [ -n "${HAVE_PKG:-}" ]; then echo "$HAVE_PKG" > "$t/dpkg/fakepkg"; fi
     cp -a "$H" "$t/orig"; cp -a "$R" "$t/origroot"
@@ -172,6 +172,7 @@ KSUNIT=$R/etc/systemd/system/KlipperScreen.service
 has "$KSUNIT" "User=$(id -un)"
 has "$KSUNIT" "KS_XCLIENT=$H/.KlipperScreen-env/bin/python $H/KlipperScreen/screen.py\" BACKEND=X"
 has "$KSUNIT" "PAMName=%u"
+has "$KSUNIT" "#ExecStartPost=+chvt 7"
 has "$t/systemctl.log" "restart KlipperScreen"
 cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$H"/zero-extended/backup/*/files"$KSUNIT" ||
     fail "old KlipperScreen unit not backed up under its own path"

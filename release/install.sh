@@ -242,6 +242,9 @@ if [ -f "$ksunit" ] && [ -f "$kstpl" ]; then   # upstream's template, filled in 
     ksunit_text=$(<"$kstpl"); ksunit_text=${ksunit_text//KS_USER/"$(id -un)"}
     ksunit_text=${ksunit_text//KS_ENV/"$HOME/.KlipperScreen-env"}; ksunit_text=${ksunit_text//KS_DIR/"$HOME/KlipperScreen"}
     ksunit_text=${ksunit_text//KS_BACKEND/X}
+    # X starts on the first free VT (2 here), not the session's tty7, and switches to it itself; a later
+    # "chvt 7" left the screen on the boot console. Upstream's installer comments it out the same way without a VT.
+    ksunit_text=${ksunit_text//$'\n'ExecStartPost=/$'\n'#ExecStartPost=}
     if [ "$ksunit_text" != "$(cat "$ksunit")" ]; then
         replace "$ksunit" "$ksunit_text"; sudo -n systemctl daemon-reload; restart_add KlipperScreen
         log "KlipperScreen: service file updated from upstream's template"

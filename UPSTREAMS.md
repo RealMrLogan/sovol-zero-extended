@@ -158,10 +158,11 @@ reverted):
   the printer's libnm 1.30.6.
 - **Service file:** install.sh fills in upstream's `scripts/KlipperScreen.service` as its installer does.
   New against Sovol's: `PAMName=%u` (a logind session on tty7, seen as `c1 sovol seat0 tty7`),
-  `CapabilityBoundingSet=~CAP_WAKE_ALARM` and `ExecStartPost=+chvt 7`. `chvt` is in `kbd`, which its installer
-  adds when there's a VT and Sovol's image lacks: without it the service fails to start (203/EXEC, seen),
-  so `kbd` 2.3.0-3 is shipped too. X still runs on VT 2 on this printer (it did before as well) and starts
-  after `chvt 7`, so the screen ends on X. Run as a release installs it (`a12e8dd`, its venv, both `.deb`s,
+  `CapabilityBoundingSet=~CAP_WAKE_ALARM` and `ExecStartPost=+chvt 7`. install.sh comments out the `chvt 7`
+  (as upstream's installer does on systems without a VT): X here starts on the first free VT, 2, not the
+  session's tty7, and switches to it itself. When `chvt 7` ran after that, the screen was left on the boot
+  console, or flickered (seen); without it, ten restarts all ended on VT 2. So `kbd`, which upstream's
+  installer adds for `chvt`, isn't shipped. Run as a release installs it (`a12e8dd`, its venv, both `.deb`s,
   the new unit): three restarts each left one xinit/Xorg/KlipperScreen and a stop left none, the network
   panel imports libnm. After a manual stop the unit reads `failed` (xinit exits non-zero; from upstream's
   `exec xinit`). **Under `PAMName`, X and KlipperScreen live in the login session's scope**, outside the

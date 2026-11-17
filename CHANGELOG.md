@@ -2,6 +2,13 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
+## v0.4.1
+
+- KlipperScreen: the screen no longer gets stuck on the boot console or flickers after a start or a rotation.
+  Upstream's service file switches to VT 7 after starting, but X runs on VT 2 on the Zero; install.sh now
+  comments that line out, and `kbd` (only shipped for it) is no longer installed.
+- Config page: the heater calibrations are labelled as PID tuning.
+
 ## v0.4.0
 
 - Config page: a setting change or an install is refused while a calibration or an install runs (each restarts
