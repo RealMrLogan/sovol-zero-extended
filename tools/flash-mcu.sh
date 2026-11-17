@@ -5,6 +5,11 @@ set -euo pipefail
 . "$(dirname "$0")/common.sh"
 board=${1:?usage: flash-mcu.sh toolhead|mainboard [local.bin]}
 bin=$B/out/$board.bin
+# asked first: the ssh calls below would read the answer from stdin
+if [ "$board" = mainboard ]; then
+    echo "The mainboard is the USB-CAN bridge: a bad image cuts off BOTH boards (Katapult itself stays intact)."
+    read -rp "Type 'mainboard' to flash it: " a; [ "$a" = mainboard ] || exit 1
+fi
 rsh "mkdir -p $B"
 rsync -t "$ROOT/release/flash-board.sh" "$PRINTER:$B/"
 if [ -n "${2:-}" ]; then
@@ -12,10 +17,6 @@ if [ -n "${2:-}" ]; then
     bin=$B/upload-$board.bin
 fi
 require_idle
-if [ "$board" = mainboard ]; then
-    echo "The mainboard is the USB-CAN bridge: a bad image cuts off BOTH boards (Katapult itself stays intact)."
-    read -rp "Type 'mainboard' to flash it: " a; [ "$a" = mainboard ] || exit 1
-fi
 rsh "mkdir -p $B/flashed && cp $bin $B/flashed/$board-\$(date +%Y%m%d-%H%M%S).bin"   # history of every image flashed
 rsh sudo -n systemctl stop klipper
 trap 'rsh sudo -n systemctl start klipper' EXIT
