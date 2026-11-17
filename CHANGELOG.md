@@ -8,6 +8,8 @@ Each `## vX.Y.Z` section becomes that release's notes.
   logs): setting changes (old -> new), calibration start, result and failures with their traceback, and
   install starts. Before, these were only on the page, or in a journal Sovol caps at 20 MB (about 30 min).
   The install log timestamps every line and lists the Python packages an install changed (old -> new).
+- Tests: the config page's server (cross-site refusal, input validation, its log) and the dependency rules
+  make-release.sh applies to app pins, now shared with build-wheels.sh in `tools/app-deps.sh`.
 - install.sh installs an app's Python requirements when its pin changes them (`apps.conf`'s new pip
   column), offline, from wheels shipped in the release (`apps/wheels`). It backs up the app's venv first and
   restores it on rollback. Before, any pin that touched a dependency file was refused.

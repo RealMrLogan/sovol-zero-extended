@@ -53,22 +53,15 @@ find "$stage/klipper" \( -name '*.pyc' -o -name __pycache__ -o -name '*.so' \) -
 # upstream apps (release/apps.conf). A git app only needs a bundle once its pin moves past Sovol's stock
 # commit, which every Zero already has; the bundle carries just stock..pin, so installs work offline.
 # install.sh installs Python requirements (the pip column) from wheels, but can't install system packages.
+. "$ROOT/tools/app-deps.sh"
 mkdir -p "$stage/apps"; wheels=""
 while read -r app type url stock pin _ pip; do
     case $type in
         git) [ "$pin" = "$stock" ] && continue
              echo "== $app: bundling ${stock:0:7}..${pin:0:7}"
              git clone -q --bare "$url" "$work/$app.git"
-             changed=$(git -C "$work/$app.git" diff --name-only "$stock" "$pin")
-             if grep -qE '^(scripts/system-dependencies\.json|tools/libs/pkglist-[^/]*\.sh)$' <<<"$changed" &&
-                ! grep -qx "$app $pin" "$ROOT/release/sysdeps-checked"; then
-                 echo "$app: ${pin:0:7} changes its system packages, which install.sh can't install."
-                 echo "If the printer needs none of them, add \"$app $pin\" to release/sysdeps-checked."; exit 1
-             fi
-             if [ "$pip" = - ] && grep -qE '^(scripts/)?[^/]*requirements[^/]*\.txt$' <<<"$changed"; then
-                 echo "$app: ${pin:0:7} changes its Python requirements; give it a pip column in apps.conf"; exit 1
-             fi
-             if [ "$pip" != - ] && grep -qxF "${pip#*:}" <<<"$changed"; then wheels+=" $app"; fi
+             deps=$(app_deps "$work/$app.git" "$app" "$stock" "$pin" "$pip" "$ROOT/release/sysdeps-checked")
+             if [ "$deps" = wheels ]; then wheels+=" $app"; fi
              git -C "$work/$app.git" branch -f zero-pin "$pin"
              git -C "$work/$app.git" bundle create -q "$stage/apps/$app.bundle" zero-pin "^$stock" ;;
         zip) echo "== $app: $url"
