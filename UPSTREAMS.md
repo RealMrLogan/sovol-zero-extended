@@ -48,7 +48,9 @@ The printer's pip is 20.3.4. Check it accepts `manylinux_2_28` wheels (sdbus for
 
 ## Step 1: bumps with no new requirements (one release)
 
-In progress (2026-11-16): pins set in `release/apps.conf`; rechecked, no newer targets. The crowsnest
+Done (2026-11-16, nightly `ccf6ae5`): pins set in `release/apps.conf`; rechecked, no newer targets. Tested on
+the printer: Mainsail and `/extended/` load, a jog through `_CLIENT_LINEAR_MOVE` leaves G90 set, and the
+webcam streams after a cold boot. The crowsnest
 bump changes `tools/libs/pkglist-*.sh` (adds `pkg-config`, only for building ustreamer); its runtime
 scripts need nothing the printer lacks.
 
@@ -68,6 +70,10 @@ scripts need nothing the printer lacks.
 Test: pages load, jog leaves the mode unchanged, webcam streams after a reboot.
 
 ## Step 2: remove moonraker-obico
+
+In progress (2026-11-16): done in install.sh (after a successful install), `apps.conf` and patch 0010;
+covered by `tests/install-test.sh`. Not yet installed on the printer. The commented
+`#[include moonraker-obico-update.cfg]` in `moonraker.conf` stays (a comment; moonraker.conf is untouched).
 
 Not used (never linked: no `auth_token`). Everything that refers to it:
 

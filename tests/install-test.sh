@@ -20,9 +20,12 @@ setup() {
     echo old > "$H/mainsail/index.html"
     echo '{"user": "keep"}' > "$H/mainsail/config.json"
     touch "$H/printer_data/logs/klippy.log"
-    printf '[printer]\r\nmax_accel: 40000\r\n\r\n%s\r\n#*# [input_shaper]\r\n' "$AUTOSAVE" > "$CFG/printer.cfg"
+    printf '[include moonraker_obico_macros.cfg]\r\n[printer]\r\nmax_accel: 40000\r\n\r\n%s\r\n#*# [input_shaper]\r\n' "$AUTOSAVE" > "$CFG/printer.cfg"
     cp "$CFG/printer.cfg" "$H/patch/config/printer.cfg"
-    printf '[gcode_macro KEEP]\ngcode:\n[gcode_macro _OTA]\ngcode:\n  RUN_SHELL_COMMAND CMD=ota\n' > "$CFG/get_ip.cfg"
+    printf '[gcode_macro KEEP]\ngcode:\n[gcode_macro _OTA]\ngcode:\n  RUN_SHELL_COMMAND CMD=ota\n[gcode_macro _OBICO_CODE_GET]\ngcode:\n[delayed_gcode code_display]\ngcode:\n    OBICO_LINK_STATUS\n' > "$CFG/get_ip.cfg"
+    mkdir -p "$H/moonraker-obico" "$H/moonraker-obico-env"
+    for d in "$CFG" "$H/patch/config"; do touch "$d"/{moonraker_obico_macros.cfg,moonraker-obico.cfg,moonraker-obico-update.cfg}; done
+    touch "$R/etc/systemd/system/moonraker-obico.service"
     printf 'server {\n    server_name _;\n}\n' > "$R/etc/nginx/sites-available/mainsail"
     printf 'keep\n/boot/scripts/ota_service.sh &\n' > "$R/boot/scripts/btt_init.sh"
     touch "$R/etc/systemd/system/crowsnest.service"
@@ -79,6 +82,11 @@ EOF
 done
 has "$CFG/get_ip.cfg" "[gcode_macro KEEP]"
 lacks "$CFG/get_ip.cfg" "_OTA"
+lacks "$CFG/get_ip.cfg" "OBICO"
+for f in "$CFG/printer.cfg" "$H/patch/config/printer.cfg"; do lacks "$f" obico; done
+for f in "$H/moonraker-obico" "$H/moonraker-obico-env" "$CFG/moonraker_obico_macros.cfg" "$H/patch/config/moonraker-obico.cfg" \
+         "$R/etc/systemd/system/moonraker-obico.service"; do [ ! -e "$f" ] || fail "$f left behind"; done
+has "$t/systemctl.log" "disable -q --now moonraker-obico"
 lacks "$R/boot/scripts/btt_init.sh" ota_service
 has "$R/boot/scripts/btt_init.sh" keep
 has "$R/etc/nginx/sites-available/mainsail" "include $R/etc/nginx/snippets/zero-extended.conf;"
@@ -106,6 +114,7 @@ same klipper/klippy/klippy.py; same mainsail/index.html
 same printer_data/config/printer.cfg; same patch/config/printer.cfg
 [ ! -e "$CFG/zero-extended" ] || fail "zero-extended.cfg left behind"
 [ ! -e "$H/zero-extended/version" ] || fail "version recorded for a failed install"
+[ -e "$H/moonraker-obico" ] && [ -e "$CFG/moonraker_obico_macros.cfg" ] || fail "obico removed by a failed install"
 has "$t/out" "FIRMWARE_RESTART"
 
 echo "install-test ok"

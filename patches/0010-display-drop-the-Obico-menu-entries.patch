@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Logan Saunders <32494494+RealMrLogan@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 20:15:00 -0700
+Subject: [PATCH] display: drop the Obico menu entries
+
+moonraker-obico is removed from the printer. These entries read its
+OBICO_LINK_STATUS macro, which is removed with it.
+---
+ klippy/extras/display/menu.cfg | 25 -------------------------
+ 1 file changed, 25 deletions(-)
+
+diff --git a/klippy/extras/display/menu.cfg b/klippy/extras/display/menu.cfg
+index 9bcf0f730..c8cbb84a6 100755
+--- a/klippy/extras/display/menu.cfg
++++ b/klippy/extras/display/menu.cfg
+@@ -667,31 +667,6 @@ gcode:
+     PID_CALIBRATE HEATER=heater_bed TARGET=60 WRITE_FILE=1
+     SAVE_CONFIG
+ 
+-[menu __main __setup __obico_link]
+-type: list
+-name: {'Re-link' if printer["gcode_macro OBICO_LINK_STATUS"].is_linked else 'Link'} Obico
+-
+-[menu __main __setup __obico_link _install_obico]
+-type: command
+-enable: { not printer["gcode_macro OBICO_LINK_STATUS"].is_linked and printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode == ''}
+-name: Install Obico
+-gcode:
+-    _OBICO_CODE_GET
+-
+-[menu __main __setup __obico_link _one_time_passcode]
+-type: command
+-enable: { not printer["gcode_macro OBICO_LINK_STATUS"].is_linked and printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode != ''}
+-name: Code: {printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode}
+-gcode:
+-    M117 Code: {printer["gcode_macro OBICO_LINK_STATUS"].one_time_passcode}
+-
+-[menu __main __setup __obico_link _relink]
+-type: command
+-enable: {printer["gcode_macro OBICO_LINK_STATUS"].is_linked}
+-name: Confirm Re-link
+-gcode:
+-    _OBICO_RELINK
+-
+ [menu __main __info]
+ type: list
+ enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}

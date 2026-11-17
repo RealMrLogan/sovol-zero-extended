@@ -213,7 +213,8 @@ for f in "$ROOT"/boot/scripts/ota_service.sh "$HOME/ota_client.sh" "$HOME/pyhelp
     if [ -e "$f" ]; then sudo -n rm -f "$f"; log "Sovol updaters: removed $f"; fi
 done
 # their macros, from the live config and from Sovol's copy that the display's factory reset restores
-# (backed up for reference only: putting them back would re-add macros calling the scripts deleted above)
+# (backed up for reference only: putting them back would re-add macros calling the scripts deleted above),
+# and the Obico ones (moonraker-obico is removed below; nothing but these sections calls them)
 for cfg in "$HOME/printer_data/config/get_ip.cfg" "$HOME/patch/config/get_ip.cfg"; do
     [ -f "$cfg" ] || continue
     cp -p "$cfg" "$backup/$(echo "${cfg#"$HOME"/}" | tr / _)"
@@ -221,6 +222,8 @@ for cfg in "$HOME/printer_data/config/get_ip.cfg" "$HOME/patch/config/get_ip.cfg
 import sys
 drop = {"[gcode_shell_command %s]" % c for c in ("ota", "mcu_up", "extruder_mcu_up", "extra_mcu_up")}
 drop |= {"[gcode_macro %s]" % m for m in ("_OTA", "_MCU_UP", "_EXTRUDER_MCU_UP", "_EXTRA_MCU_UP")}
+drop |= {"[gcode_shell_command obico_restart]", "[gcode_macro _OBICO_RESTART]", "[gcode_macro _OBICO_CODE_GET]",
+         "[delayed_gcode code_display]"}
 lines = open(sys.argv[1], newline="").read().splitlines(True)   # newline="": keep its CRLFs
 out, skip = [], False
 for line in lines:
@@ -232,7 +235,7 @@ if len(out) == len(lines):
     sys.exit(1)                     # nothing to remove: no log line
 open(sys.argv[1], "w", newline="").write("".join(out))
 EOF
-    then log "Sovol updaters: macros removed from ${cfg#"$HOME"/}"; fi
+    then log "Sovol updaters and Obico: macros removed from ${cfg#"$HOME"/}"; fi
 done
 
 # zero-extended.cfg: our Klipper settings (full resonance test range, damping, the page's motor current and
@@ -319,4 +322,18 @@ fi
 trap - ERR
 echo "$version" > "$STATE/version"
 cp manifest.json "$STATE/manifest.json"
+
+# moonraker-obico: not used (never linked). Removed only once the install has succeeded: a rolled-back klippy
+# has Sovol's menu, which reads the OBICO_LINK_STATUS macro. One-way, like the updaters.
+if [ -e "$HOME/moonraker-obico" ] || [ -e "$ROOT"/etc/systemd/system/moonraker-obico.service ]; then
+    sudo -n systemctl disable -q --now moonraker-obico || true
+    sudo -n rm -f "$ROOT"/etc/systemd/system/moonraker-obico.service
+    sudo -n systemctl daemon-reload
+    rm -rf "$HOME/moonraker-obico" "$HOME/moonraker-obico-env" "$HOME"/printer_data/logs/moonraker-obico.log*
+    for cfg in "$PRINTER_CFG" "$PATCH_CFG"; do
+        if [ -f "$cfg" ]; then sed -i '/^\[include moonraker_obico_macros\.cfg\]/d' "$cfg"; fi
+        rm -f "$(dirname "$cfg")"/{moonraker_obico_macros.cfg,moonraker-obico.cfg,moonraker-obico-update.cfg}
+    done
+    log "moonraker-obico removed (takes effect at Klipper's next restart)"
+fi
 log "installed sovol-zero-extended $version"

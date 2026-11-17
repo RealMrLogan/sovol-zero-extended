@@ -4,6 +4,11 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- moonraker-obico is removed (it was never linked): its service, `~/moonraker-obico` and its venv, its
+  config files and `printer.cfg` include, its macros in `get_ip.cfg` (live and factory-reset copies) and the
+  stock screen's Setup > Link Obico menu (patch 0010). It goes only after a successful install, since an
+  older klippy's menu needs its macros. One-way: installing an older release doesn't bring it back, and that
+  release's Link Obico menu entry won't work.
 - Upstream apps: Mainsail 2.13.2 → 2.19.0; mainsail-config → `ff3869a` (jogging from Mainsail no longer leaves
   the printer in relative or absolute mode); crowsnest 4.1.9 → 4.2.0 (`cf936da`, fixes only). KlipperScreen's
   source now points at its new home, github.com/KlipperScreen/KlipperScreen (same code).
