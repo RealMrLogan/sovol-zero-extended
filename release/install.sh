@@ -70,12 +70,11 @@ done
 
 # upstream apps (apps.conf): work out what changes, and make sure every pin is at hand, before touching anything
 log "checking upstream apps"
-# shortcut: a pin that changes an app's Python or system dependencies is refused; install.sh would have to
-# pip/apt install them (needs the network), so upgrade that app by hand or teach install.sh first
-DEPS='(^|/)([^/]*requirements[^/]*\.txt|setup\.py|pyproject\.toml|system-dependencies\.json)$'
-apps=(); dirty=""; restart=""; declare -A atype apin
-while read -r name type _ _ pin services; do
-    dir=$HOME/$name; atype[$name]=$type; apin[$name]=$pin; changed=0
+# Python requirements (apps.conf pip column) are installed from the release's wheels. System packages can't
+# be: make-release refuses a pin that changes them, unless they were checked (release/sysdeps-checked).
+apps=(); dirty=""; restart=""; pipapps=""; declare -A atype apin apip
+while read -r name type _ _ pin services pip; do
+    dir=$HOME/$name; atype[$name]=$type; apin[$name]=$pin; apip[$name]=$pip; changed=0
     [ -e "$dir" ] || { log "$name: not installed, skipping"; continue; }
     if [ "$type" = git ]; then
         have=$(git -C "$dir" rev-parse HEAD)
@@ -85,8 +84,9 @@ while read -r name type _ _ pin services; do
                 git -C "$dir" fetch -q origin "$pin" || true
             git -C "$dir" cat-file -e "$pin^{commit}" || { echo "$name: cannot get commit $pin"; exit 1; }
             files=$(git -C "$dir" diff --name-only "$have" "$pin")   # not piped into grep -q: SIGPIPE + pipefail
-            if grep -qE "$DEPS" <<<"$files"; then
-                echo "$name: ${pin:0:7} changes its dependencies, which install.sh cannot install yet"; exit 1
+            if [ "$pip" != - ] && grep -qxF "${pip#*:}" <<<"$files"; then
+                [ -d apps/wheels ] || { echo "$name: ${pin:0:7} changes its Python requirements, and the release has no wheels"; exit 1; }
+                pipapps+=" $name"; log "$name: Python requirements change"
             fi
             changed=1; log "$name: ${have:0:7} -> ${pin:0:7}"
         fi
@@ -129,6 +129,9 @@ restore_host() {   # rsync -c: a release file can match the backup's size and mt
         while read -r name ref; do git -C "$HOME/$name" checkout -q "$ref" || log "$name: could not return to $ref"; done < "$backup/apps.prev"
     fi
     for d in "$backup"/apps/*/; do if [ -d "$d" ]; then rsync -ac --delete "$d" "$HOME/$(basename "$d")/"; fi; done
+    for name in $pipapps; do   # venvs/<app>: the app's venv before pip changed it
+        if [ -d "$backup/venvs/$name" ]; then rsync -ac --delete "$backup/venvs/$name/" "$HOME/${apip[$name]%%:*}/"; fi
+    done
     for name in $stashed; do git -C "$HOME/$name" stash pop -q || log "$name: local changes kept in git stash"; done
     if [ -d "$backup/zero-config" ]; then rsync -ac --delete "$backup/zero-config/" "$STATE/zero-config/"; fi
     if [ -f "$backup/klipper-config/printer.cfg" ]; then   # a bad zero-extended.cfg would keep Klipper down
@@ -166,6 +169,14 @@ for name in "${apps[@]}"; do
     log "$name: installed ${apin[$name]:0:12}"
 done
 if [ ${#apps[@]} = 0 ] && [ -z "$dirty" ]; then echo "(all apps already at their pins)"; fi
+for name in $pipapps; do   # offline: only the wheels in the release; packages already satisfied stay as they are
+    venv=$HOME/${apip[$name]%%:*}
+    mkdir -p "$backup/venvs"
+    cp -a "$venv" "$backup/venvs/$name"
+    "$venv/bin/pip" install -q --disable-pip-version-check --no-index --find-links "$PWD/apps/wheels" \
+        -r "$HOME/$name/${apip[$name]#*:}"
+    log "$name: Python requirements installed"
+done
 
 dropin=$ROOT/etc/systemd/system/crowsnest.service.d/zero-extended.conf
 if [ -f "$ROOT"/etc/systemd/system/crowsnest.service ] && ! cmp -s systemd/crowsnest-zero.conf "$dropin"; then

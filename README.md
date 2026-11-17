@@ -65,7 +65,9 @@ Upstream apps (`release/apps.conf`) are put on their pins the same way: git apps
 pinned commit (local edits are stashed, not lost), Mainsail is replaced by the pinned official release zip
 (keeping `config.json`), and any failure restores them with `klippy/`. To upgrade an app, change its pin;
 the zip then carries a git bundle from Sovol's stock commit to the pin, so installs don't need the network.
-A pin that changes an app's Python/system dependencies is refused for now.
+When a pin changes an app's Python requirements (the pip column), the zip carries wheels built for the
+printer (`tools/build-wheels.sh`), installed offline into the app's venv, which is backed up and restored on
+rollback. A pin that changes system packages is refused at build time unless listed in `release/sysdeps-checked`.
 `release/boards.conf` picks per board whether a release ships the stock image or one built from `patches/`.
 Build locally on the printer: `TREE=<patched tree> tools/make-release.sh vX.Y.Z`.
 

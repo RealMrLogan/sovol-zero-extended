@@ -2,6 +2,16 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
+## Unreleased
+
+- install.sh installs an app's Python requirements when its pin changes them (`apps.conf`'s new pip
+  column), offline, from wheels shipped in the release (`apps/wheels`). It backs up the app's venv first and
+  restores it on rollback. Before, any pin that touched a dependency file was refused.
+- Releases: `tools/build-wheels.sh` builds those wheels for the printer (arm64, Python 3.9, Debian 11), in CI
+  in an emulated Debian 11 container, only when a pin needs them. `make-release.sh` now refuses a pin that
+  changes system packages (install.sh can't install them) unless it's listed in `release/sysdeps-checked`
+  as checked by hand, and a pin that changes the Python requirements of an app without a pip column.
+
 ## v0.3.0
 
 - moonraker-obico is removed (it was never linked): its service, `~/moonraker-obico` and its venv, its

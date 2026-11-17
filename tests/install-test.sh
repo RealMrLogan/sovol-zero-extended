@@ -2,6 +2,7 @@
 # Runs release/install.sh against a fake printer: a temporary $HOME, a fake / for /etc and /boot (ZX_ROOT) and
 # stubs for Moonraker (curl), sudo, systemctl, nginx, pkill and sleep. No boards are flashed (--no-flash).
 # Checks a clean install, a re-install, a refusal during a print and the rollback when Klipper doesn't come back.
+# Moonraker is a git repo whose pin changes its requirements, with a venv whose pip only records its calls.
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 t=$(mktemp -d); trap '[ -n "${KEEP:-}" ] || rm -rf "$t"' EXIT
@@ -38,6 +39,16 @@ setup() {
     echo new > "$REL/apps/mainsail/index.html"
     echo '{"name": "sovol-zero-extended", "version": "v9.9.9", "boards": {"toolhead": {"version": "t"}, "mainboard": {"version": "m"}}}' \
         > "$REL/manifest.json"
+    # moonraker at Sovol's stock commit; the pin changes its requirements, so install.sh pip-installs them
+    A=$H/moonraker; mkdir -p "$A/scripts" "$H/moonraker-env/bin"
+    g() { git -C "$A" -c user.name=t -c user.email=t@t "$@"; }
+    g init -q; echo 'tornado==1' > "$A/scripts/moonraker-requirements.txt"; g add -A; g commit -qm stock
+    echo 'tornado==2' > "$A/scripts/moonraker-requirements.txt"; g commit -qam pin
+    PIN=$(g rev-parse HEAD); STOCK=$(g rev-parse HEAD~1); g checkout -q "$STOCK"
+    printf '#!/usr/bin/env bash\necho "$*" >> %s/pip.log; touch "$(dirname "$0")/../installed"\n' "$t" > "$H/moonraker-env/bin/pip"
+    chmod +x "$H/moonraker-env/bin/pip"
+    { grep "^mainsail " "$REPO/release/apps.conf"; echo "moonraker git x $STOCK $PIN moonraker moonraker-env:scripts/moonraker-requirements.txt"; } > "$REL/apps.conf"
+    if [ -z "${NOWHEELS:-}" ]; then mkdir -p "$REL/apps/wheels"; touch "$REL/apps/wheels/tornado-2-py3-none-any.whl"; fi
     (cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
 
     # Moonraker: Klipper's state and the print state come from FAKE_KLIPPER and FAKE_PRINT
@@ -93,11 +104,15 @@ has "$R/etc/nginx/sites-available/mainsail" "include $R/etc/nginx/snippets/zero-
 has "$R/etc/systemd/system/zero-config.service" "$H"
 has "$R/etc/systemd/system/crowsnest.service.d/zero-extended.conf" "[Service]"
 has "$t/systemctl.log" "restart klipper"
+has "$t/systemctl.log" "restart moonraker"
+[ "$(git -C "$H/moonraker" rev-parse HEAD)" = "$PIN" ] || fail "moonraker not at its pin"
+has "$t/pip.log" "--no-index --find-links $REL/apps/wheels -r $H/moonraker/scripts/moonraker-requirements.txt"
 
 echo "== re-install changes nothing"
 cp "$CFG/printer.cfg" "$t/installed.cfg"
 [ "$(install ready standby)" = 0 ] || { cat "$t/out"; fail "re-install failed"; }
 cmp -s "$t/installed.cfg" "$CFG/printer.cfg" || fail "re-install changed printer.cfg"
+[ "$(wc -l < "$t/pip.log")" = 1 ] || fail "re-install ran pip again"
 [ "$(grep -c 'zero-extended.conf;' "$R/etc/nginx/sites-available/mainsail")" = 1 ] || fail "nginx include added twice"
 
 echo "== refused while printing"
@@ -105,6 +120,12 @@ setup
 [ "$(install ready printing)" = 1 ] || fail "installed during a print"
 has "$t/out" "refusing to install"
 same klipper/klippy/klippy.py; same printer_data/config/printer.cfg; same mainsail/index.html
+
+echo "== refused when the pin needs wheels the release lacks"
+NOWHEELS=1 setup
+[ "$(install ready standby)" = 1 ] || fail "installed without wheels"
+has "$t/out" "the release has no wheels"
+[ "$(git -C "$H/moonraker" rev-parse HEAD)" = "$STOCK" ] || fail "moonraker moved"
 
 echo "== rollback when Klipper doesn't come back"
 setup
@@ -115,6 +136,9 @@ same printer_data/config/printer.cfg; same patch/config/printer.cfg
 [ ! -e "$CFG/zero-extended" ] || fail "zero-extended.cfg left behind"
 [ ! -e "$H/zero-extended/version" ] || fail "version recorded for a failed install"
 [ -e "$H/moonraker-obico" ] && [ -e "$CFG/moonraker_obico_macros.cfg" ] || fail "obico removed by a failed install"
+[ -e "$t/pip.log" ] || fail "pip never ran"
+[ ! -e "$H/moonraker-env/installed" ] || fail "moonraker-env not restored"
+[ "$(git -C "$H/moonraker" rev-parse HEAD)" = "$STOCK" ] || fail "moonraker not back at its old commit"
 has "$t/out" "FIRMWARE_RESTART"
 
 echo "install-test ok"

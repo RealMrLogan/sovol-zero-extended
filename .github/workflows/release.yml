@@ -19,7 +19,36 @@ concurrency:            # a newer push to main replaces a nightly build still ru
   cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 jobs:
+  wheels:   # Python packages for apps whose pin changes their requirements (tools/build-wheels.sh); usually none
+    runs-on: ubuntu-latest
+    outputs:
+      built: ${{ steps.need.outputs.apps != '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: need
+        run: echo "apps=$(tools/build-wheels.sh -n)" >> "$GITHUB_OUTPUT"
+      - if: steps.need.outputs.apps != ''
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - name: Build wheels for the printer (arm64, Debian 11, Python 3.9)
+        if: steps.need.outputs.apps != ''
+        run: |
+          docker run --rm --platform linux/arm64 -v "$PWD:/w" -w /w debian:bullseye bash -euc '
+            printf "%s\n" "deb http://archive.debian.org/debian bullseye main" \
+                           "deb http://archive.debian.org/debian-security bullseye-security main" > /etc/apt/sources.list
+            apt-get update -q
+            apt-get install -y -q --no-install-recommends ca-certificates git python3-venv python3-dev gcc pkg-config libcairo2-dev
+            git config --global --add safe.directory "*"
+            tools/build-wheels.sh wheels'
+      - if: steps.need.outputs.apps != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheels
+          path: wheels/
+
   release:
+    needs: wheels
     runs-on: ubuntu-latest
     # Debian 11 ships arm-none-eabi-gcc 15:8-2019-q3-1+b1, the compiler Sovol built the stock images with
     container: debian:bullseye
@@ -43,6 +72,12 @@ jobs:
           submodules: true
           fetch-depth: 0    # tags, for the nightly version
 
+      - if: needs.wheels.outputs.built == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: wheels
+          path: wheels
+
       - name: Test
         shell: bash
         run: tools/test.sh
@@ -54,7 +89,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then version=$GITHUB_REF_NAME
           else version=$(git describe --tags --long --match 'v*'); fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          tools/make-release.sh "$version"
+          WHEELS=$PWD/wheels tools/make-release.sh "$version"
 
       - name: Publish nightly
         if: github.ref_type == 'branch'

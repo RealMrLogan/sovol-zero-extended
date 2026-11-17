@@ -1,0 +1,4 @@
+# App pins whose system-package changes were checked by hand and need nothing on the printer: "<app> <pin>".
+# make-release.sh refuses any other pin that changes them, since install.sh can't install system packages.
+# crowsnest cf936da: pkglist-*.sh adds pkg-config, used only to build ustreamer (the printer keeps its build)
+crowsnest cf936dabdcf6a3d1eb0138d8eea9044745b40db6

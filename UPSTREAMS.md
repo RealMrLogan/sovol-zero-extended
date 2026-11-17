@@ -26,6 +26,16 @@ don't add new requirements.
 Today install.sh refuses any app pin whose diff touches a dependency file (`DEPS` regex) and installs no
 packages itself. Moonraker, KlipperScreen and crowsnest v5 all change dependencies, so this comes first.
 
+pip done (2026-11-16), not yet released: `apps.conf` pip column, offline install from `apps/wheels` with venv
+backup and rollback (`tests/install-test.sh`), `tools/build-wheels.sh` + a CI job (QEMU, untested in CI),
+and build-time refusal of system-package changes (`release/sysdeps-checked` lists reviewed exceptions).
+Tried on the printer with the step 3 and 4 targets: the wheels built on Debian 11 arm64 (pycairo and
+streaming-form-data from source, ~10 min native); offline installs into copies of both venvs changed only
+what the new requirements need, `pip check` clean, pip 20.3.4 took the `manylinux_2_28` sdbus wheel, and
+pycairo 1.28.0 imports against the printer's cairo 1.16. Moonraker `b559b9a` changes
+`system-dependencies.json`, so step 3 has to review it and add it to `release/sysdeps-checked`.
+apt (crowsnest v5) is left for step 6. App removal was done for obico alone (step 2).
+
 - **Fix the regex.** It refuses harmless files (Moonraker `docs/doc-requirements.txt`,
   `docs/pymdown-extras/setup.py`) and misses real ones (crowsnest `tools/libs/pkglist-*.sh`).
 - **pip:** ship a cp39 / aarch64 wheelhouse in the release zip and install with

@@ -2,6 +2,7 @@
 # Build a release zip: dist/sovol-zero-extended-<version>.zip (+ .sha256).
 # Usage: make-release.sh <version>      e.g. v0.1.0 (needs arm-none-eabi-gcc 8.3.1: Debian 11 or the printer)
 # TREE=<dir> uses an already-patched Klipper tree instead of building one from klipper/ + patches/.
+# WHEELS=<dir>: wheels from tools/build-wheels.sh, needed when an app's pin changes its Python requirements.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 version=${1:?usage: make-release.sh <version>}
@@ -51,12 +52,23 @@ find "$stage/klipper" \( -name '*.pyc' -o -name __pycache__ -o -name '*.so' \) -
 
 # upstream apps (release/apps.conf). A git app only needs a bundle once its pin moves past Sovol's stock
 # commit, which every Zero already has; the bundle carries just stock..pin, so installs work offline.
-mkdir -p "$stage/apps"
-while read -r app type url stock pin _; do
+# install.sh installs Python requirements (the pip column) from wheels, but can't install system packages.
+mkdir -p "$stage/apps"; wheels=""
+while read -r app type url stock pin _ pip; do
     case $type in
         git) [ "$pin" = "$stock" ] && continue
              echo "== $app: bundling ${stock:0:7}..${pin:0:7}"
              git clone -q --bare "$url" "$work/$app.git"
+             changed=$(git -C "$work/$app.git" diff --name-only "$stock" "$pin")
+             if grep -qE '^(scripts/system-dependencies\.json|tools/libs/pkglist-[^/]*\.sh)$' <<<"$changed" &&
+                ! grep -qx "$app $pin" "$ROOT/release/sysdeps-checked"; then
+                 echo "$app: ${pin:0:7} changes its system packages, which install.sh can't install."
+                 echo "If the printer needs none of them, add \"$app $pin\" to release/sysdeps-checked."; exit 1
+             fi
+             if [ "$pip" = - ] && grep -qE '^(scripts/)?[^/]*requirements[^/]*\.txt$' <<<"$changed"; then
+                 echo "$app: ${pin:0:7} changes its Python requirements; give it a pip column in apps.conf"; exit 1
+             fi
+             if [ "$pip" != - ] && grep -qxF "${pip#*:}" <<<"$changed"; then wheels+=" $app"; fi
              git -C "$work/$app.git" branch -f zero-pin "$pin"
              git -C "$work/$app.git" bundle create -q "$stage/apps/$app.bundle" zero-pin "^$stock" ;;
         zip) echo "== $app: $url"
@@ -66,6 +78,12 @@ while read -r app type url stock pin _; do
         *) echo "apps.conf: bad type '$type' for $app"; exit 1 ;;
     esac
 done < <(grep -v '^\s*#' "$ROOT/release/apps.conf" | grep .)
+if [ -n "$wheels" ]; then
+    [ -n "$(ls -A "${WHEELS:-/nonexistent}" 2>/dev/null)" ] ||
+        { echo "Python requirements change for$wheels: build wheels with tools/build-wheels.sh, pass WHEELS=<dir>"; exit 1; }
+    echo "== wheels for$wheels: $(ls "$WHEELS" | wc -l) files"
+    cp -r "$WHEELS" "$stage/apps/wheels"
+fi
 cp "$ROOT/release/apps.conf" "$stage/"
 cp -r "$ROOT/release/systemd" "$ROOT/release/zero-config" "$stage/"
 find "$stage/zero-config" -name __pycache__ -prune -exec rm -rf {} +
