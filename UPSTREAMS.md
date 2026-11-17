@@ -268,6 +268,58 @@ v5 `--sleep_boot`, applied while uptime < 120 s). Our drop-in (`release/systemd/
 still works on v5 and stays. `-s 6` in `~/printer_data/systemd/crowsnest.env` would avoid delaying manual
 restarts, but that file is user data.
 
+## Later
+
+Not upstream updates, but planned. Each needs its own look before work starts.
+
+### Speed
+
+- **Build (~9 min, ~7½ of it wheels):** every build compiles the wheels again, under QEMU, because the pins'
+  requirements differ from Sovol's stock and always will. Cache the `wheels` job's output in CI, keyed on
+  the two requirements files (a few workflow lines; skips the 7½ min when they haven't changed). Once the
+  repo is public, build on GitHub's native arm64 runners (`ubuntu-24.04-arm`, free for public repos) instead of
+  QEMU.
+- **Install (~80 s, v0.4.0 nightly):** ~40 s is pip installing the new requirements (only when a pin changes
+  them), ~15 s restarts and waiting for Klipper. Nothing big to win without dropping checks.
+- **Boot (18.5 s to multi-user: 6.9 s kernel + 11.7 s userspace):** the slowest units don't hold up Klipper,
+  which starts at 3.4 s: `rc-local` (8.0 s, Sovol's `btt_init.sh` and the scripts it starts) and crowsnest
+  (6.0 s, our deliberate camera delay). First measure what matters, Klipper `ready` and the screen usable
+  after a cold boot (from the journal), then decide whether any of Sovol's boot scripts can go.
+
+### Operating system
+
+The printer runs Debian 11 (Python 3.9.2), whose Python is past end of life (Oct 2025) and whose LTS
+support has ended or is ending (check the date). Everything pinned so far runs on 3.9 (Moonraker on its
+`< 3.10` code paths, KlipperScreen on its 3.9 compatibility pins: older requests, pycairo, psutil,
+websocket-client). Held off for now (2026-11-17). Options when an upstream drops 3.9:
+
+- **A standalone Python for the apps** (e.g. a prebuilt 3.12 beside the system one): the OS is untouched,
+  all three venvs (klippy, Moonraker, KlipperScreen) are rebuilt on it, wheels built for it, ~100 MB more
+  per release. install.sh's rollback has to keep the old interpreter. The safer option.
+- **Debian 12** (Python 3.11): every system package changes under Sovol's 5.16 kernel and the libraries
+  Sovol copied in by hand. A failed boot needs the eMMC adapter. Only with a tested image-level fallback.
+
+### Feature: power-loss recovery
+
+Sovol ships one, live on the printer (`[include plr.cfg]`):
+- **Recording:** patch 0008's `cmd_G1`, for every G1 with X, Y and Z from a file being printed, rewrites
+  `~/sovol_plr_height` (`{"commandline", "Z", ...}`, with `fsync`) and, once Z > 0.2, sets
+  `was_interrupted = True` in `saved_variables.cfg` (read and rewritten with configparser per move).
+  `START_PRINT` records the file (`save_last_file`); `END_PRINT` clears it.
+- **Offering it:** patch 0003's display menu opens on `__resume` at boot when `was_interrupted` is true
+  (Resume runs `RESUME_INTERRUPTED`, Cancel clears it). KlipperScreen and Mainsail don't show it.
+- **Resuming:** `RESUME_INTERRUPTED` sets the position to 0,0,0 without homing, then `plr.sh` writes
+  `gcodes/plr/<file>`: the slicer header, `SET_KINEMATIC_POSITION Z=<last Z>`, fixed preheats
+  (M109 S160, M190 S60), a 5 mm lift and `G28 X Y`, the file's temperatures (Cura-style
+  `material_*_temperature` keys), then the rest of the file from that Z.
+
+To decide at step 5 (the code is in patches being rebased): keep and harden it, replace it, or drop it.
+What to check first: whether it works at all on a real cut (and with OrcaSlicer files, which don't write
+Cura's keys); the per-move file writes (eMMC wear, and timing on the print's critical path); resuming
+from the last *started* move, not the last finished one (the move under way when power dies is lost or
+doubled); Z not homed (relies on the motors not having moved); and offering it on KlipperScreen and
+Mainsail, not only the stock display.
+
 ## Customizations that go away
 
 - Klipper patch 0001 (0005 is already gone); 0008's chelper, toolhead and `-backup` hunks; most of 0004.
