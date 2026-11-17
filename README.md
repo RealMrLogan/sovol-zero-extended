@@ -1,6 +1,6 @@
 # sovol-zero-extended
 
-Unofficial firmware for the Sovol Zero, built on Sovol's frozen 1.4.7.
+Unofficial firmware for the Sovol Zero: current upstream Klipper with Sovol's 1.4.7 changes ported to it.
 
 > [!WARNING]
 > **Pre-release. Use at your own risk; YMMV.** This is a personal project, not affiliated with or supported by
@@ -14,9 +14,11 @@ Unofficial firmware for the Sovol Zero, built on Sovol's frozen 1.4.7.
 - **Upstream apps**, unmodified and pinned in `release/apps.conf`, newer than stock: Moonraker, KlipperScreen,
   Mainsail, crowsnest, mainsail-config. Their Python packages and the few system packages they need ship in
   the release and install offline.
-- **Removed:** Sovol's OTA updater and board flashers, and moonraker-obico.
-- **Unchanged so far:** Klipper is Sovol's 1.4.7 (upstream `faa89be8` plus Sovol's patches), and both boards
-  run Sovol's stock firmware. Moving to current Klipper is the next step (`UPSTREAMS.md`).
+- **Klipper** is upstream master (pinned `klipper/` submodule) plus Sovol's changes, ported (`patches/`).
+  Both boards run firmware built from it. The Z offset is set by upstream's eddy "tap" (the nozzle touches
+  the bed), still through Sovol's `Z_OFFSET_CALIBRATION`. Needs `tap_threshold` (see `CHANGELOG.md`, v0.5.0).
+- **Removed:** Sovol's OTA updater and board flashers, moonraker-obico, and power-loss recovery (it stalled
+  Klipper on master; a better one is planned).
 
 ## Install
 From a computer that can `ssh sovol@<printer>`, with this repo checked out:
@@ -29,12 +31,12 @@ boards whose firmware changed, and rolls everything back if Klipper or a board d
 What it can't undo by itself is in `RECOVERY.md`.
 
 ## Layout
-- `klipper/`: upstream Klipper submodule; `patches/`: Sovol's changes on it, split by feature, then ours.
+- `klipper/`: upstream Klipper submodule; `patches/`: Sovol's changes ported to it, split by feature, then ours.
   `patches-stock/`: Sovol's series on their pin (`patches-stock/PIN`), for the byte-identical check.
 - `release/`: the installer and what it installs: `apps.conf` (app pins), `debs.conf` (system packages),
   `boards.conf` (stock or built firmware per board), `zero-config/` (the config page).
 - `tools/`: build, test, release, deploy and flash over SSH. `tests/`: run by `tools/test.sh`.
-- `stock-firmware/`: Sovol's board images, for rollback and the CI byte-identical check.
+- `stock-firmware/`: Sovol's board images, for going back to stock and the CI byte-identical check.
 - `FINDINGS.md`: what Sovol changed. `UPSTREAMS.md`: the update plan. `RECOVERY.md`: recovery.
 - Stock 1.4.7 files (Sovol's scripts, services, config) are at the tag `sovol-stock-reference`
   (`git show sovol-stock-reference:<path>`).
@@ -60,7 +62,7 @@ both boards (Katapult survives). `PRINTER` defaults to `sovol@192.168.1.130`.
 ## Releases
 CI builds every push to `main` as the `nightly` prerelease (untested, test printers only). For a release:
 add a `## vX.Y.Z` section to `CHANGELOG.md`, tag `vX.Y.Z` and push; CI builds a draft (in Debian 11, failing
-unless the toolhead image is byte-identical to stock). Install the draft on a printer, then publish it.
+unless Sovol's series in `patches-stock/` still rebuilds their toolhead image byte for byte). Install the draft on a printer, then publish it.
 App pins that change Python or system packages need wheels (`tools/build-wheels.sh`, built in CI) or an entry
 in `release/debs.conf` and `release/sysdeps-checked`; `tools/make-release.sh` refuses otherwise.
 

@@ -12,7 +12,7 @@ that can `ssh sovol@<printer>` (set `PRINTER=user@host` if it isn't `sovol@192.1
 | Board image with a wrong start address | Refuses to flash it (`flash-board.sh` checks the reset vector) |
 | New host code stops Klipper starting | Restores the previous `klippy/`, restarts Klipper, exits with an error |
 | An upstream app (Moonraker, Mainsail, ...) can't be fetched, or its pin needs Python packages the release doesn't carry | Refuses before changing anything |
-| The release changes klippy's chelper C code (Sovol disabled its rebuild) | Refuses before changing anything |
+| The release changes klippy's chelper C code | Deletes `c_helper.so` so Klipper rebuilds it on start (Sovol disabled the rebuild of a stale one) |
 | An updated app's service doesn't come back | Puts every app back on its previous commit/files and venv (and pops stashed local edits), restores `klippy/` |
 | A board flash fails or is interrupted | Retries once. The board waits in Katapult, so the retry finds it there |
 | A later board, or Klipper after flashing, fails | Every board flashed so far goes back to its previous image (newest first), then the host |
@@ -30,6 +30,17 @@ Everything install.sh does is logged to `~/zero-extended/install.log` on the pri
 ```sh
 tools/install-release.sh v0.1.0          # any earlier tag; add --force-flash <board> to reflash a board
 ```
+
+**Go back from v0.5.x (Klipper master) to v0.4.x.** Not automatic: v0.4.x's install.sh refuses master's
+chelper C, Sovol's Klipper rejects `tap_threshold`, and Sovol's Klipper can't talk to master's board
+firmware. Untested as a whole; each command is the one used elsewhere in this file:
+1. Delete the `#*# tap_threshold = ...` line from `printer.cfg`'s SAVE_CONFIG block.
+2. Put back the `klippy/` saved when v0.5 was first installed (its `c_helper.so` is Sovol's):
+   `ls ~/zero-extended/backup/` on the printer, take the `*-from-v0.4.*` folder, and rsync it as under
+   "Host code broken" below. Only the last three backups are kept: without it, reflash the eMMC.
+3. Flash both boards back to stock (below), toolhead first. The first one may say Klipper isn't ready:
+   it can't be until both boards are back.
+4. `tools/install-release.sh v0.4.1` to put back the rest. Power-loss recovery stays removed.
 
 **Put a board back on stock firmware**
 ```sh

@@ -2,6 +2,34 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
+## v0.5.0
+
+- **Klipper: Sovol's 1.4.7 (upstream `faa89be8`, 2024-10-28) → upstream master (`29d4ec2d6`, 2026-11-10)**,
+  with Sovol's changes ported (`UPSTREAMS.md`, step 5). Two years of upstream: eddy "tap" probing, i2c
+  error reporting, CAN and USB fixes, a Z-axis input shaper, new shaper recommendations.
+- **Both boards are reflashed** with firmware built from that tree (Sovol's no longer talks to it). The
+  mainboard's H750 runs at upstream's 480 MHz, up from 400. install.sh flashes them before checking Klipper,
+  and on a failure flashes every board back before restoring the host.
+- **Z offset by tap.** `Z_OFFSET_CALIBRATION` and `RUN_PROBE_VIR_CONTACT` keep their names, so Sovol's
+  print start and the stock screen work unchanged, but run on upstream's tap: the nozzle touches the bed and
+  the eddy sensor sees it. Needs `tap_threshold` in `printer.cfg`, set once with
+  `PROBE_EDDY_CURRENT_TAP_CALIBRATE`. Check that taps press at least 0.03 mm into the bed; if they fail
+  now and then, raise the threshold (12000 worked where the tool's 6858 didn't). A tap that misses is
+  retried twice.
+- **"Timer too close" is a shutdown again**, as upstream. Sovol pushed late timers back, hiding late steps.
+- **Power-loss recovery is removed**: it wrote a file on every z-hop, which stalled Klipper into that
+  shutdown. Its macros, scripts, stock menu entry and `plr.cfg` are removed after a successful install;
+  `saved_variables.cfg` keeps its keys. A better version is planned.
+- The eddy sensor reads ~6.03 MHz, over Klipper's 5 MHz default: `zero-extended.cfg` sets
+  `max_sensor_hz: 6500000`. The toolhead now recovers its i2c bus at startup and wakes the sensor, which
+  otherwise refuses the first transfer after a reset.
+- install.sh lets Klipper rebuild `c_helper.so` when its C code changes (Sovol disabled that). flash-board.sh
+  refuses an image that runs past the board's flash, and waits up to 10 s for Katapult.
+- KlipperScreen shows "Option 'z_offset' in section 'probe_eddy_current eddy' is deprecated". Harmless:
+  renaming it would break going back to an older release.
+- **Going back to v0.4.x isn't automatic.** An older install.sh refuses this release's `c_helper` changes,
+  and Sovol's Klipper rejects `tap_threshold`. See `RECOVERY.md`.
+
 ## v0.4.1
 
 - KlipperScreen: the screen no longer gets stuck on the boot console or flickers after a start or a rotation.

@@ -1,23 +1,24 @@
 # Upstream update plan
 
 Goal: every upstream on its current version, with everything the printer does today still working.
-Status (2026-11-16): steps 1 and 2 are released (v0.3.0), step 0's pip half is on `main`; each step says
-where it stands. Researched 2026-11-15 (read-only: scratch clones, PyPI metadata, the printer
+Status (2026-11-17): steps 0-4 are released (v0.3.0, v0.4.0); step 5 (Klipper master) is in release
+candidates on branch `klipper-master` (v0.5.0-rc.*); step 6 (crowsnest v5) is left. Each step says where it
+stands. Researched 2026-11-15 (read-only: scratch clones, PyPI metadata, the printer
 over SSH, and Klipper master run in batch mode against the printer's config and the stock images' data
 dictionaries). "Inferred" marks what was read in code but not run.
 
 ## Where everything stands
 
-| Upstream | Pinned now | Target | Blocker |
+| Upstream | Stock | Now | Status |
 |---|---|---|---|
-| mainsail-config | `e57810d` (v1.2.1) | `ff3869a621db17ce3ef660adbbd3fa321995ac42` | none |
-| Mainsail | v2.13.2 zip | v2.19.0 zip, sha256 `c4d9d96f89851c6ae0709c2f20725447f3fe8c57cf193869b0083441bd93378a` | none |
-| crowsnest | `d75a3ae` (v4.1.9-1) | v5 (`436042452f564f3d737e3b980a213f849a8a0562` = v5.0.12); master `cf936dabdcf6a3d1eb0138d8eea9044745b40db6` (v4.2.0 + a changelog commit) as a stepping stone | apt + venv in install.sh |
-| moonraker-obico | `4c0b7b6` | **removed** (not used) | removal steps below |
-| moonraker-timelapse | `c7fff11` | `c7fff11` (upstream `main` hasn't moved) | none |
-| Moonraker | `4e00a07` (v0.9.3-1) | `b559b9a81161f958a43c2f527b6ad96f73310d5d` (v0.11.0+4) | **pinned** (step 3) |
-| KlipperScreen | `7127b5d6` (v0.4.5-3) | `a12e8dde55d79774f9dfc5c59a61854f3f5c0184` (master, 2026-11-15) | **pinned** (step 4) |
-| Klipper | `faa89be` (2024-10-28) + patches | master (`29d4ec2d6` at research time) | patch rebase, probe rewrite, toolhead reflash |
+| mainsail-config | `e57810d` (v1.2.1) | `ff3869a` | done (v0.3.0) |
+| Mainsail | v2.13.2 zip | v2.19.0 zip | done (v0.3.0) |
+| crowsnest | `d75a3ae` (v4.1.9-1) | master `cf936da` (v4.2.0), a stepping stone | v5 (`436042452f564f3d737e3b980a213f849a8a0562` = v5.0.12) is step 6: needs apt + venv in install.sh |
+| moonraker-obico | `4c0b7b6` | **removed** (not used) | done (v0.3.0) |
+| moonraker-timelapse | `c7fff11` | `c7fff11` | upstream `main` hasn't moved |
+| Moonraker | `4e00a07` (v0.9.3-1) | `b559b9a` (v0.11.0+4) | done (v0.4.0) |
+| KlipperScreen | `7127b5d6` (v0.4.5-3) | `a12e8dd` (master, 2026-11-15) | done (v0.4.0) |
+| Klipper | `faa89be` (2024-10-28) + Sovol's patches | master `29d4ec2d6` + ported patches, both boards rebuilt | release candidates (v0.5.0-rc.*, branch `klipper-master`) |
 
 Targets are the newest commits at research time; recheck before each step and take newer ones if they
 don't add new requirements.
@@ -28,7 +29,7 @@ Before this step, install.sh refused any app pin whose diff touched a dependency
 installed no packages itself. Moonraker, KlipperScreen and crowsnest v5 all change dependencies, so this
 comes first.
 
-pip done (2026-11-16), not yet released: `apps.conf` pip column, offline install from `apps/wheels` with venv
+pip done (2026-11-16, released in v0.4.0): `apps.conf` pip column, offline install from `apps/wheels` with venv
 backup and rollback (`tests/install-test.sh`), `tools/build-wheels.sh` + a CI job (QEMU, untested in CI),
 and build-time refusal of system-package changes (`release/sysdeps-checked` lists reviewed exceptions).
 Tried on the printer with the step 3 and 4 targets: the wheels built on Debian 11 arm64 (pycairo and
@@ -38,7 +39,7 @@ pycairo 1.28.0 imports against the printer's cairo 1.16. Moonraker `b559b9a` cha
 `system-dependencies.json`, so step 3 has to review it and add it to `release/sysdeps-checked`.
 apt (crowsnest v5) is left for step 6. App removal was done for obico alone (step 2).
 
-`.deb`s done (2026-11-17, step 4), not yet released: `release/debs.conf` lists Debian's own packages by
+`.deb`s done (2026-11-17, step 4, released in v0.4.0): `release/debs.conf` lists Debian's own packages by
 version, sha256 and archive.debian.org URL; make-release downloads and checks them into `debs/`. install.sh
 adds only missing ones, before any change refuses them unless `apt-get -s` would install exactly those (it
 checks dependencies; `dpkg --dry-run -i` doesn't: it passed a backports build whose libnm0 the printer
@@ -114,7 +115,7 @@ Removal is one-way, like the OTA removal: rollback doesn't reinstall it.
 
 ## Step 3: Moonraker → `b559b9a`
 
-Pinned (2026-11-17), not yet released; rechecked, still upstream master. Tested on the printer before
+Released in v0.4.0 (pinned 2026-11-17, then still upstream master). Tested on the printer before
 pinning: the wheels installed offline into a copy of `moonraker-env` (`pip check` clean; only apprise,
 dbus-fast, inotify-simple, Jinja2 and paho-mqtt changed), and `b559b9a` ran from it on port 7126 against
 the live Klipper: no failed components, history, timelapse and file APIs answer, `/access/user` gives 200
@@ -146,7 +147,7 @@ Moonraker from it on another port.
 
 ## Step 4: KlipperScreen → `a12e8dd`
 
-Pinned (2026-11-17), not yet released: master, not the planned `26d2625`, with its setup brought up to
+Released in v0.4.0 (pinned 2026-11-17): master, not the planned `26d2625`, with its setup brought up to
 what its installer does now, so nothing runs on a fallback. Tested on the printer before pinning (each test
 reverted):
 
@@ -268,18 +269,22 @@ already-imported modules.
   dictionary, but the stock image has Sovol's older protocol. The master image runs the H750 at 480 MHz, not
   stock's 400 (upstream `43f9219cf`; `CLOCK_FREQ` has no prompt, so `configs/mainboard.config`'s value is
   ignored). Flashed and power-cycled on hardware 2026-11-17: both boards and the CAN bridge came back.
-- **Reproducibility check:** the byte-identical toolhead check proves the extraction of Sovol's tree, not
-  the new image. Keep it as a frozen CI job (old pin + current patches moved to e.g. `patches-stock/`).
-  The new toolhead image becomes `boards.conf: build`.
-- gcc 8.3.1 building master is **unverified**. So is the image size (stock toolhead is 31.8 KB of 56 KB).
+- **Reproducibility check:** done. The release build still rebuilds Sovol's toolhead image from
+  `patches-stock/` on its `PIN` and compares it byte for byte; it proves the extraction of Sovol's tree, not
+  the new images, which are `boards.conf: build`.
+- gcc 8.3.1 (Debian 11, the printer's and CI's) builds master: toolhead 39 KB of 56 KB (stock 31.8 KB),
+  mainboard 45 KB of 128 KB.
 
 ### Hardware test (in order)
 
-1. Flash the toolhead; CAN uuid still `61755fe321ac`; LDC1612 reads.
-2. `PROBE_EDDY_CURRENT_CALIBRATE`, tap calibrate, `G28 Z`, rapid-scan bed mesh.
-3. lis2dw resonance test, stock screen and menus, fan-fault and shutdown codes.
-4. A long print, watching for timer errors.
-5. Reflash the mainboard on master; recheck the ws2811 power-on LEDs (FINDINGS.md).
+1. Flash the toolhead; CAN uuid still `61755fe321ac`; LDC1612 reads. **Done.**
+2. `PROBE_EDDY_CURRENT_CALIBRATE`, tap calibrate, `G28 Z`, rapid-scan bed mesh. **Done.**
+3. lis2dw resonance test, stock screen and menus, fan-fault and shutdown codes. Not yet.
+4. A long print, watching for timer errors. Prints of up to 21 layers ran without timer errors or stalls over
+   0.13 s; no full-length print yet.
+5. Reflash the mainboard on master. **Done** (by hand, then power-cycled). Still to check: the stock
+   screen's ws2811 backlight at power-on (its delays compute to zero at 400 MHz and above; FINDINGS.md),
+   and install.sh flashing the mainboard from a release.
 
 Katapult answers on the chip's real CAN uuid, so a bad toolhead flash is recoverable (RECOVERY.md).
 The stock screen's z-offset/calibration flow changes behaviour with the move to tap.
@@ -353,9 +358,10 @@ A replacement, once everything is current, should:
 
 ## Customizations that go away
 
-- Klipper patch 0001 (0005 is already gone); 0008's chelper, toolhead and `-backup` hunks; most of 0004.
-- moonraker-obico entirely (step 2).
-- The byte-identical check moves from the release build to a frozen job.
+- Done at step 5: Klipper patch 0001; 0008's chelper, toolhead and `-backup` hunks; most of 0004
+  (rewritten on tap); power-loss recovery.
+- moonraker-obico entirely (step 2, done).
+- The byte-identical check now builds Sovol's frozen series (`patches-stock/`), not the release's.
 
 Everything else stays: KlipperScreen leaves rotation to the OS, crowsnest still doesn't wait for the
 camera, and Sovol made no other changes to these apps (checked against `sovol-stock-reference`).
