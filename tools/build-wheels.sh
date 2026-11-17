@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the wheels install.sh installs offline: for each app with a pip column in apps.conf whose pin changes
 # that requirements file from Sovol's stock commit, every package the file needs, built for the printer
-# (arm64, Python 3.9, glibc 2.31). Run on Debian 11 arm64 with git, python3-venv, python3-dev, gcc, pkg-config
-# and libcairo2-dev (pycairo has no wheel); CI uses an emulated debian:bullseye container.
+# (arm64, Python 3.9, glibc 2.31). Run on Debian 11 arm64 with git, python3-venv, python3-dev, gcc, pkg-config,
+# libcairo2-dev and libgirepository1.0-dev (pycairo and PyGObject have no wheel); CI uses an emulated
+# debian:bullseye container.
 # Usage: build-wheels.sh <out dir>     build-wheels.sh -n: only list the apps that need wheels (any machine)
 # APPS_CONF=<file> reads another apps.conf (to try a pin before setting it).
 set -euo pipefail
