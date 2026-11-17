@@ -6,11 +6,20 @@ from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import calibration
 from settings import SETTINGS, choices
-from updates import MAX_UPLOAD, install_args, installed_release, save_upload, start_install, update_status
+from updates import MAX_UPLOAD, install_args, install_state, installed_release, save_upload, start_install, update_status
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.expanduser("~/printer_data/logs/zero-config.log")   # next to Klipper's, so Mainsail lists it
 log = logging.getLogger("zero-config")
+
+
+def busy():
+    """Why the printer can't take a change now, or None: installs, calibrations and settings each restart
+    Klipper, so only one runs at a time."""
+    if install_state()[0]:
+        return "an install is running"
+    job = calibration.running()
+    return "%s is running" % job if job else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -90,6 +99,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(args, list):
                 raise ValueError("args must be a list")
             pending = update_status()["pending"] or {}
+            reason = busy()
+            if reason:
+                raise RuntimeError(reason)
             start_install(install_args(args))
         except (ValueError, AttributeError) as e:
             return self.send(400, {"error": str(e)})
@@ -119,6 +131,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": "expected {\"value\": ...}"})
         if not isinstance(value, str) or value not in choices(s):   # trust boundary: only known values reach set()
             return self.send(400, {"error": "invalid value"})
+        reason = busy()
+        if reason:
+            return self.send(409, {"error": "not now: %s" % reason})
         try:
             old = s["get"]()
         except Exception:

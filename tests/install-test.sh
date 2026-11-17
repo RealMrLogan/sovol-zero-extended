@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Runs release/install.sh against a fake printer: a temporary $HOME, a fake / for /etc and /boot (ZX_ROOT) and
-# stubs for Moonraker (curl), sudo, systemctl, nginx, pkill, sleep and dpkg (packages are files in $t/dpkg).
-# No boards are flashed (--no-flash). Checks a clean install, a re-install, refusals (a print, missing wheels,
-# a package dpkg can't install or that's installed at another version) and the rollback when Klipper doesn't
-# come back. Moonraker is a git repo whose pin changes its requirements, with a venv whose pip only records its
-# calls. The release ships one .deb (fakepkg).
+# stubs for Moonraker (curl), sudo, systemctl, nginx, pkill, sleep and dpkg (packages are files in $t/dpkg) and a
+# fake flash-board.sh. Checks a clean install, a re-install, refusals (a print, missing wheels, a package dpkg
+# can't install or that's already there), the rollback when Klipper doesn't come back, and board flashing with
+# its rollback (FLASH=1; otherwise --no-flash). Moonraker is a git repo whose pin changes its requirements, with
+# a venv whose pip only records its calls. The release ships one .deb (fakepkg).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 t=$(mktemp -d); trap '[ -n "${KEEP:-}" ] || rm -rf "$t"' EXIT
@@ -46,8 +46,23 @@ setup() {
     find "$REL" -name __pycache__ -prune -exec rm -rf {} +
     echo new > "$REL/klipper/klippy/klippy.py"
     echo new > "$REL/apps/mainsail/index.html"
-    echo '{"name": "sovol-zero-extended", "version": "v9.9.9", "boards": {"toolhead": {"version": "t"}, "mainboard": {"version": "m"}}}' \
-        > "$REL/manifest.json"
+    echo '{"name": "sovol-zero-extended", "version": "v9.9.9", "boards": {
+        "toolhead": {"version": "t", "stock_file": "firmware/stock-toolhead.bin", "stock_version": "t0"},
+        "mainboard": {"version": "m", "stock_file": "firmware/stock-mainboard.bin", "stock_version": "m0"}}}' > "$REL/manifest.json"
+    # boards: they run t0/m0 (also the stock images) and the release ships t/m. The fake flash-board.sh records
+    # each flash in $t/flash.log and makes the board run that image ($t/fw/<board>). FAKE_FLASH_FAIL=<board>:
+    # the release's image fails on that board, an older one still flashes.
+    mkdir -p "$REL/firmware" "$t/fw"
+    for b in toolhead mainboard; do
+        echo "${b:0:1}" > "$REL/firmware/$b.bin"; echo "${b:0:1}0" > "$REL/firmware/stock-$b.bin"; echo "${b:0:1}0" > "$t/fw/$b"
+    done
+    cat > "$REL/flash-board.sh" <<EOF
+#!/usr/bin/env bash
+echo "\$1 \$(cat "\$2")" >> $t/flash.log
+if [ "\$1" = "\${FAKE_FLASH_FAIL:-}" ] && [[ \$2 == firmware/* ]]; then exit 1; fi
+cat "\$2" > $t/fw/\$1
+EOF
+    chmod +x "$REL/flash-board.sh"
     # moonraker at Sovol's stock commit; the pin changes its requirements, so install.sh pip-installs them
     A=$H/moonraker; mkdir -p "$A/scripts" "$H/moonraker-env/bin"
     g() { git -C "$A" -c user.name=t -c user.email=t@t "$@"; }
@@ -60,7 +75,8 @@ if [ "\$1" = freeze ]; then [ -e "\$(dirname "\$0")/../installed" ] && echo torn
 echo "\$*" >> $t/pip.log; touch "\$(dirname "\$0")/../installed"
 EOF
     chmod +x "$H/moonraker-env/bin/pip"
-    { grep "^mainsail " "$REPO/release/apps.conf"; echo "moonraker git x $STOCK $PIN moonraker moonraker-env:scripts/moonraker-requirements.txt"; } > "$REL/apps.conf"
+    # mainsail also restarts moonraker here (as timelapse does on the printer): two apps, one service
+    { grep "^mainsail " "$REPO/release/apps.conf" | awk '{$6 = "moonraker"; print}'; echo "moonraker git x $STOCK $PIN moonraker moonraker-env:scripts/moonraker-requirements.txt"; } > "$REL/apps.conf"
     if [ -z "${NOWHEELS:-}" ]; then mkdir -p "$REL/apps/wheels"; touch "$REL/apps/wheels/tornado-2-py3-none-any.whl"; fi
     mkdir -p "$REL/debs"; touch "$REL/debs/fakepkg_1.0_arm64.deb"
     echo "fakepkg 1.0 - https://example.invalid/fakepkg_1.0_arm64.deb" > "$REL/debs.conf"
@@ -71,30 +87,43 @@ EOF
 case $url in
     *printer/info) echo "{\"result\": {\"state\": \"$FAKE_KLIPPER\"}}" ;;
     *print_stats) echo "{\"result\": {\"status\": {\"print_stats\": {\"state\": \"$FAKE_PRINT\"}}}}" ;;
+    *query?mcu%20extruder_mcu) echo "{\"result\": {\"status\": {\"mcu extruder_mcu\": {\"mcu_version\": \"$(cat "$FAKE_FW/toolhead")\"}}}}" ;;
+    *query?mcu) echo "{\"result\": {\"status\": {\"mcu\": {\"mcu_version\": \"$(cat "$FAKE_FW/mainboard")\"}}}}" ;;
     *firmware_restart) ;;
     *) exit 22 ;;
 esac'
     stub sudo '[ "$1" = -n ] && shift; exec "$@"'
-    stub systemctl "echo \"\$*\" >> $t/systemctl.log"
+    stub systemctl "echo \"\$*\" >> $t/systemctl.log; [ -z \"\${FAKE_RELOAD_FAIL:-}\" ] || [ \"\$1\" != daemon-reload ]"
     stub nginx ':'
     stub pkill 'exit 1'
     stub sleep ':'
-    # dpkg: a package is installed when $t/dpkg/<name> holds its version. apt-get -s simulates installing the
-    # .debs: FAKE_DPKG_FAIL = their dependencies are missing, FAKE_APT_EXTRA = it would also install another package
+    # dpkg: $t/dpkg/<name> holds a package's state and version as dpkg-query prints them ("ii 1.0", "rc 1.0").
+    # apt-get -s simulates installing the .debs: FAKE_DPKG_FAIL = their dependencies are missing,
+    # FAKE_APT_EXTRA = it would also install another package
     stub apt-get "[ -z \"\${FAKE_DPKG_FAIL:-}\" ] || { echo 'E: Unable to correct problems'; exit 100; }
 [ -z \"\${FAKE_APT_EXTRA:-}\" ] || echo 'Inst libextra (1 Debian)'
 for a; do case \$a in *.deb) b=\$(basename \"\$a\"); echo \"Inst \${b%%_*} (1 local-deb)\" ;; esac; done"
-    stub dpkg-query "f=$t/dpkg/\${!#}; [ -f \"\$f\" ] || exit 1; printf 'ii %s' \"\$(cat \"\$f\")\""
-    stub dpkg "echo \"\$*\" >> $t/dpkg.log
+    cat > "$BIN/dpkg-query" <<EOF
+#!/usr/bin/env bash
+f=$t/dpkg/\${!#}; [ -f "\$f" ] || exit 1; printf '%s' "\$(cat "\$f")"
+EOF
+    cat > "$BIN/dpkg" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> $t/dpkg.log
+while [[ \$1 == --force-* ]]; do shift; done
 case \$1 in
-    -i) shift; for d; do b=\$(basename \"\$d\" _arm64.deb); echo \"\${b#*_}\" > $t/dpkg/\${b%%_*}; done ;;
+    -i) shift; for d; do b=\$(basename "\$d" _arm64.deb); echo "ii \${b#*_}" > $t/dpkg/\${b%%_*}; done ;;
+    -r) sed -i 's/^../rc/' $t/dpkg/\$2 ;;
     -P) rm $t/dpkg/\$2 ;;
-esac"
+esac
+EOF
+    chmod +x "$BIN/dpkg-query" "$BIN/dpkg"
 }
 
-install() {   # FAKE_KLIPPER FAKE_PRINT: install.sh's exit code
-    local rc=0
-    HOME=$H ZX_ROOT=$R PATH=$BIN:$PATH FAKE_KLIPPER=$1 FAKE_PRINT=$2 "$REL/install.sh" --no-flash > "$t/out" 2>&1 || rc=$?
+install() {   # FAKE_KLIPPER FAKE_PRINT: install.sh's exit code. Boards are flashed only with FLASH=1
+    local rc=0 opts=(--no-flash)
+    if [ -n "${FLASH:-}" ]; then opts=(); fi
+    HOME=$H ZX_ROOT=$R PATH=$BIN:$PATH FAKE_KLIPPER=$1 FAKE_PRINT=$2 FAKE_FW=$t/fw "$REL/install.sh" "${opts[@]}" > "$t/out" 2>&1 || rc=$?
     echo $rc
 }
 same() { cmp -s "$t/orig/$1" "$H/$1" || fail "$1 changed"; }
@@ -146,6 +175,12 @@ has "$KSUNIT" "PAMName=%u"
 has "$t/systemctl.log" "restart KlipperScreen"
 cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$H"/zero-extended/backup/*/files"$KSUNIT" ||
     fail "old KlipperScreen unit not backed up under its own path"
+cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$H/zero-extended/originals$KSUNIT" ||
+    fail "Sovol's KlipperScreen unit not kept in originals/"
+has "$t/dpkg.log" "--force-confdef --force-confold -i"
+for s in moonraker zero-config; do
+    [ "$(grep -c "^restart $s\$" "$t/systemctl.log")" = 1 ] || fail "$s not restarted exactly once"
+done
 
 echo "== re-install changes nothing"
 cp "$CFG/printer.cfg" "$t/installed.cfg"
@@ -153,7 +188,7 @@ cp "$CFG/printer.cfg" "$t/installed.cfg"
 cmp -s "$t/installed.cfg" "$CFG/printer.cfg" || fail "re-install changed printer.cfg"
 [ "$(wc -l < "$t/pip.log")" = 1 ] || fail "re-install ran pip again"
 [ "$(grep -c 'zero-extended.conf;' "$R/etc/nginx/sites-available/mainsail")" = 1 ] || fail "nginx include added twice"
-[ "$(grep -c '^-i ' "$t/dpkg.log")" = 1 ] || fail "re-install ran dpkg -i again"
+[ "$(grep -c -- ' -i ' "$t/dpkg.log")" = 1 ] || fail "re-install ran dpkg -i again"
 lacks "$t/out" "service file updated"
 lacks "$t/out" "started as upstream does now"
 
@@ -180,10 +215,15 @@ done
 has "$t/out" "Inst libextra"
 
 echo "== refused when a package is installed at another version"
-HAVE_PKG=0.9 setup
+HAVE_PKG="ii 0.9" setup
 [ "$(install ready standby)" = 1 ] || fail "replaced an installed package"
 has "$t/out" "fakepkg 0.9 is installed, the release ships 1.0"
 same klipper/klippy/klippy.py; has "$t/dpkg/fakepkg" 0.9
+
+echo "== refused when a package is half-installed"
+HAVE_PKG="iU 1.0" setup
+[ "$(install ready standby)" = 1 ] || fail "installed over a half-installed package"
+has "$t/out" "install.sh only adds missing packages (dpkg: iU)"
 
 echo "== rollback when Klipper doesn't come back"
 setup
@@ -201,5 +241,39 @@ has "$t/out" "FIRMWARE_RESTART"
 [ ! -e "$t/dpkg/fakepkg" ] || fail "fakepkg not removed"
 same printer_data/systemd/moonraker.env
 cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$R/etc/systemd/system/KlipperScreen.service" || fail "KlipperScreen unit not restored"
+
+echo "== a package held at the release's version is left alone"
+HAVE_PKG="hi 1.0" setup
+[ "$(install ready standby)" = 0 ] || { cat "$t/out"; fail "refused a held package at the release's version"; }
+has "$t/dpkg/fakepkg" "hi 1.0"; [ ! -e "$t/dpkg.log" ] || fail "dpkg touched a held package"
+
+echo "== rollback keeps a package's config files that were there before"
+HAVE_PKG="rc 0.9" setup
+[ "$(install error standby)" = 1 ] || fail "install succeeded with Klipper down"
+has "$t/dpkg.log" "-r fakepkg"; has "$t/dpkg/fakepkg" "rc "
+
+echo "== rollback goes on when systemd can't reload"
+FAKE_RELOAD_FAIL=1 setup; export FAKE_RELOAD_FAIL=1
+[ "$(install ready standby)" = 1 ] || fail "install succeeded without daemon-reload"
+unset FAKE_RELOAD_FAIL
+has "$t/out" "daemon-reload failed"
+same klipper/klippy/klippy.py; same printer_data/systemd/moonraker.env; [ ! -e "$t/dpkg/fakepkg" ] || fail "fakepkg left installed"
+
+echo "== boards: only changed ones are flashed, toolhead first"
+setup; export FLASH=1
+[ "$(install ready standby)" = 0 ] || { cat "$t/out"; fail "install with flashing failed"; }
+[ "$(cat "$t/flash.log")" = $'toolhead t\nmainboard m' ] || fail "flashed: $(cat "$t/flash.log")"
+has "$t/fw/toolhead" t; has "$t/fw/mainboard" m; has "$H/zero-extended/firmware/mainboard.version" m
+[ "$(install ready standby)" = 0 ] || fail "re-install failed"
+[ "$(wc -l < "$t/flash.log")" = 2 ] || fail "re-install flashed again"
+
+echo "== boards: one that fails goes back, with every board flashed before it, then the host"
+setup; export FAKE_FLASH_FAIL=mainboard
+[ "$(install ready standby)" = 1 ] || fail "install succeeded with a failed flash"
+unset FLASH FAKE_FLASH_FAIL
+[ "$(cat "$t/flash.log")" = $'toolhead t\nmainboard m\nmainboard m\nmainboard m0\ntoolhead t0' ] ||
+    fail "flashed: $(tr '\n' ' ' < "$t/flash.log")"
+has "$t/fw/toolhead" t0; has "$t/fw/mainboard" m0
+same klipper/klippy/klippy.py; [ ! -e "$H/zero-extended/version" ] || fail "version recorded for a failed install"
 
 echo "install-test ok"

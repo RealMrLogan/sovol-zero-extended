@@ -61,10 +61,15 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git make cpp python3 gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi curl rsync xz-utils
           arm-none-eabi-gcc --version | head -1
-          curl -fsSL https://github.com/cli/cli/releases/download/v2.104.0/gh_2.104.0_linux_amd64.tar.gz | tar -xz -C /tmp
+          # downloaded tools are checked against pinned SHA-256s: this job can publish releases
+          curl -fsSLo /tmp/gh.tar.gz https://github.com/cli/cli/releases/download/v2.104.0/gh_2.104.0_linux_amd64.tar.gz
+          echo "98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e  /tmp/gh.tar.gz" | sha256sum -c
+          tar -xzf /tmp/gh.tar.gz -C /tmp
           echo /tmp/gh_2.104.0_linux_amd64/bin >> "$GITHUB_PATH"
           # the shellcheck tools/test.sh is checked with locally; Debian 11's 0.7.1 warns about things it doesn't
-          curl -fsSL https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz | tar -xJ -C /tmp
+          curl -fsSLo /tmp/shellcheck.tar.xz https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  /tmp/shellcheck.tar.xz" | sha256sum -c
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
           echo /tmp/shellcheck-v0.11.0 >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v7

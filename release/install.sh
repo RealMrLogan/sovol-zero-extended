@@ -74,6 +74,7 @@ log "checking upstream apps"
 # Python requirements (apps.conf pip column) are installed from the release's wheels. System packages only
 # from debs.conf: make-release refuses a pin that changes them, unless they were checked (release/sysdeps-checked).
 apps=(); dirty=""; restart=""; pipapps=""; declare -A atype apin apip
+restart_add() { [[ " $restart " == *" $1 "* ]] || restart+=" $1"; }   # services to restart, each once
 while read -r name type _ _ pin services pip; do
     dir=$HOME/$name; atype[$name]=$type; apin[$name]=$pin; apip[$name]=$pip; changed=0
     [ -e "$dir" ] || { log "$name: not installed, skipping"; continue; }
@@ -96,20 +97,21 @@ while read -r name type _ _ pin services pip; do
         diffs=$(rsync -rcni --delete --exclude=config.json "apps/$name/" "$dir/")
         if [ -n "$diffs" ]; then changed=1; log "$name: differs from the release's build"; fi
     fi
-    if [ $changed = 1 ]; then apps+=("$name"); [ "$services" = - ] || restart+=" $services"; fi
+    if [ $changed = 1 ]; then apps+=("$name"); [ "$services" = - ] || restart_add "$services"; fi
 done < <(grep -v '^\s*#' apps.conf | grep .)
 
 # system packages (debs.conf), from the release's .debs: only missing ones are added, and only if their
 # dependencies are already installed. The rollback purges them again.
-debs=""; debfiles=()
+debs=""; debfiles=(); declare -A deb_had   # deb_had[package]: its dpkg state before ("c": config files left)
 while read -r pkg ver _ url; do
-    have=$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' "$pkg" 2>/dev/null || true)
-    if [ "$have" = "ii $ver" ]; then continue; fi
-    # shortcut: no upgrades of an installed package (the rollback would need its old .deb); add them when one is needed
-    if [[ $have == ii* ]]; then
-        echo "$pkg ${have#ii } is installed, the release ships $ver: install.sh only adds missing packages"; exit 1
+    have=$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' "$pkg" 2>/dev/null || true)   # e.g. "ii 1.0", "hi 1.0", "rc 1.0"
+    state=${have:1:1}   # n: not installed, c: only its config files, i: installed (also when held); else half-installed
+    if [ "$state" = i ] && [ "${have:3}" = "$ver" ]; then continue; fi
+    # shortcut: no upgrades or repairs of a package that's there (the rollback would need its old .deb); add them when one is needed
+    if [ -n "$state" ] && [ "$state" != n ] && [ "$state" != c ]; then
+        echo "$pkg ${have:3} is installed, the release ships $ver: install.sh only adds missing packages (dpkg: ${have:0:2})"; exit 1
     fi
-    debs+=" $pkg"; debfiles+=("debs/${url##*/}"); log "$pkg: will install $ver"
+    deb_had[$pkg]=$state; debs+=" $pkg"; debfiles+=("debs/${url##*/}"); log "$pkg: will install $ver"
 done < <(grep -v '^\s*#' debs.conf | grep .)
 if [ -n "$debs" ]; then   # dpkg --dry-run doesn't check dependencies; apt's simulation does, and must add nothing else
     sim=$(apt-get -s -o Debug::NoLocking=1 install --no-install-recommends "${debfiles[@]/#/$PWD/}" 2>&1) || true
@@ -139,10 +141,11 @@ restart_services() {   # each on its own, so one bad unit can't stop the others 
     for s in klipper $restart; do sudo -n systemctl restart "$s" || rc=1; done
     return $rc
 }
-restart_add() { [[ " $restart " == *" $1 "* ]] || restart+=" $1"; }
 replaced=()   # files replace() changed; the previous copy of each is in $backup/files<its path>
+ORIGINALS=$STATE/originals   # and the copy from before any release first changed it, kept for good (backups rotate)
 replace() {   # file content: write content to file as root, keeping the old file for restore_host
     mkdir -p "$backup/files$(dirname "$1")"; sudo -n cp -p "$1" "$backup/files$1"
+    if [ ! -e "$ORIGINALS$1" ]; then mkdir -p "$ORIGINALS$(dirname "$1")"; sudo -n cp -p "$1" "$ORIGINALS$1"; fi
     replaced+=("$1")
     printf '%s\n' "$2" | sudo -n tee "$1" >/dev/null
 }
@@ -155,8 +158,11 @@ restore_host() {   # rsync -c: a release file can match the backup's size and mt
     rsync -ac --delete "$backup/klippy/" "$KLIPPER/klippy/"
     local f
     for f in "${replaced[@]}"; do sudo -n cp -p "$backup/files$f" "$f" || log "$f: could not restore it"; done
-    if [ ${#replaced[@]} -gt 0 ]; then sudo -n systemctl daemon-reload; fi
-    for p in $debs_added; do sudo -n dpkg -P "$p" >/dev/null || log "$p: could not remove it"; done
+    if [ ${#replaced[@]} -gt 0 ]; then sudo -n systemctl daemon-reload || log "systemd: daemon-reload failed"; fi
+    for p in $debs_added; do   # purged, unless its config files were there before: those stay, as they were
+        if [ "${deb_had[$p]}" = c ]; then mode=-r; else mode=-P; fi
+        sudo -n dpkg "$mode" "$p" >/dev/null || log "$p: could not remove it"
+    done
     if [ -f "$backup/apps.prev" ]; then
         while read -r name ref; do git -C "$HOME/$name" checkout -q "$ref" || log "$name: could not return to $ref"; done < "$backup/apps.prev"
     fi
@@ -182,7 +188,7 @@ trap 'log "unexpected failure, rolling back"; restore_host' ERR
 
 if [ -n "$debs" ]; then
     debs_added=$debs   # before dpkg: a failure can leave some of them installed
-    sudo -n dpkg -i "${debfiles[@]}" >/dev/null
+    sudo -n dpkg --force-confdef --force-confold -i "${debfiles[@]}" >/dev/null   # never asks: no terminal here
     log "system packages installed:$debs"
 fi
 
@@ -233,7 +239,9 @@ if [ -d "$HOME/moonraker" ] && [ -f "$menv" ] && [ "$menv_text" != "$(cat "$menv
 fi
 ksunit=$ROOT/etc/systemd/system/KlipperScreen.service; kstpl=$HOME/KlipperScreen/scripts/KlipperScreen.service
 if [ -f "$ksunit" ] && [ -f "$kstpl" ]; then   # upstream's template, filled in as its installer does (X: Sovol's backend)
-    ksunit_text=$(sed "s|KS_USER|$(id -un)|g; s|KS_ENV|$HOME/.KlipperScreen-env|g; s|KS_DIR|$HOME/KlipperScreen|g; s|KS_BACKEND|X|g" "$kstpl")
+    ksunit_text=$(<"$kstpl"); ksunit_text=${ksunit_text//KS_USER/"$(id -un)"}
+    ksunit_text=${ksunit_text//KS_ENV/"$HOME/.KlipperScreen-env"}; ksunit_text=${ksunit_text//KS_DIR/"$HOME/KlipperScreen"}
+    ksunit_text=${ksunit_text//KS_BACKEND/X}
     if [ "$ksunit_text" != "$(cat "$ksunit")" ]; then
         replace "$ksunit" "$ksunit_text"; sudo -n systemctl daemon-reload; restart_add KlipperScreen
         log "KlipperScreen: service file updated from upstream's template"
@@ -251,14 +259,14 @@ fi
 if [ -d "$STATE/zero-config" ]; then cp -a "$STATE/zero-config" "$backup/"; fi
 page_changes=$(rsync -rci --delete --exclude=__pycache__ zero-config/ "$STATE/zero-config/")
 if [ -n "$page_changes" ]; then
-    restart+=" zero-config"; log "config page: updated"
+    restart_add zero-config; log "config page: updated"
 fi
 unit=$(sed "s|@USER@|$(id -un)|; s|@HOME@|$HOME|" zero-config/zero-config.service)
 if [ "$unit" != "$(cat "$ROOT"/etc/systemd/system/zero-config.service 2>/dev/null)" ]; then
     echo "$unit" | sudo -n tee "$ROOT"/etc/systemd/system/zero-config.service >/dev/null
     sudo -n systemctl daemon-reload
     sudo -n systemctl enable -q zero-config
-    restart+=" zero-config"; log "config page: service installed"
+    restart_add zero-config; log "config page: service installed"
 fi
 site=$ROOT/etc/nginx/sites-available/mainsail; snippet=$ROOT/etc/nginx/snippets/zero-extended.conf
 if ! cmp -s zero-config/nginx.conf "$snippet" || ! grep -q "include $snippet;" "$site"; then

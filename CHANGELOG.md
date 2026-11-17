@@ -4,6 +4,16 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- Config page: a setting change or an install is refused while a calibration or an install runs (each restarts
+  Klipper, which used to cut the other short). The belt check deletes the previous run's result files first,
+  so it can't report on them.
+- install.sh, system packages: one already there is never touched (held, or half-installed: refused), and a
+  rollback keeps the config files of one that only had those before. dpkg never stops to ask about config
+  files. A failing `daemon-reload` no longer stops a rollback partway. A service shared by two apps restarts
+  once.
+- Tests: board flashing and its rollback (a failed board is flashed back, with every board before it, then
+  the host), and flash-board.sh's check of an image's start address. CI checks the SHA-256 of the tools it
+  downloads.
 - KlipperScreen v0.4.5 → current master (`a12e8dd`, 414 commits): lockscreen, fine-tune panel, Spoolman
   editing, settings in categories, keyboard navigation, a rewritten network panel, and many fixes. Its
   new Python packages ship in the release and install offline.
@@ -15,9 +25,10 @@ Each `## vX.Y.Z` section becomes that release's notes.
   template (a login session for the screen), and Moonraker starts with `-m moonraker` instead of its legacy
   `moonraker.py` entry point. Both are restored on rollback. Installing an older release afterwards keeps
   them; for KlipperScreen that breaks the screen on its next restart (its old start script under the new
-  service), so put Sovol's service file back first: copy the install's backup
-  (`~/zero-extended/backup/<install>/files/etc/systemd/system/KlipperScreen.service`) over
-  `/etc/systemd/system/KlipperScreen.service`, then `sudo systemctl daemon-reload`.
+  service), so put Sovol's service file back first: copy
+  `~/zero-extended/originals/etc/systemd/system/KlipperScreen.service` (every file a release replaces is kept
+  there as it was before, for good) over `/etc/systemd/system/KlipperScreen.service`, then
+  `sudo systemctl daemon-reload`.
 - Moonraker v0.9.3 → v0.11.0 (`b559b9a`, 187 commits): security fixes in authorization (constant-time
   credential checks, trusted-client checks now include the proxy's address), newer slicer metadata, and
   the replacement of the unmaintained dbus-next. Its new Python packages ship in the release and install

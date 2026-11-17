@@ -129,6 +129,11 @@ def compare_belts(a, b):
 
 
 def run_belts():
+    for path in BELT_FILES.values():   # an earlier run's files must not be read as this one's
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
     _home()
     for belt, axis in (("a", "1,1"), ("b", "1,-1")):
         moonraker.gcode("TEST_RESONANCES AXIS=%s NAME=zx_belt_%s" % (axis, belt))
@@ -187,6 +192,11 @@ def start(name, target=None):
         _job.update(name=name, running=True, start=time.time(), error=None)
     log.info("calibration %s: started%s", name, " at %d C" % target if heater else "")
     threading.Thread(target=_run, args=(name, fn, heater, target), daemon=True).start()
+
+
+def running():
+    """The running calibration's label, or None."""
+    return JOBS[_job["name"]][0] if _job["running"] else None
 
 
 def _run(name, fn, heater, target):
@@ -320,6 +330,16 @@ if __name__ == "__main__":   # self-check: python3 calibration.py
     run_shaper()
     assert m.sent == ["G28", "SHAPER_CALIBRATE", "SAVE_CONFIG"], m.sent
     assert tuning.load()["auto_accel"] == 8300
+    # the belt check never reads an earlier run's files: here Klipper writes none, so it fails
+    BELT_FILES = {b: os.path.join(tmp.name, "belt_%s.csv" % b) for b in "ab"}
+    for path in BELT_FILES.values():
+        open(path, "w").write("freq,psd_xyz\n50,1\n")
+    Fake().install()
+    try:
+        run_belts()
+        raise AssertionError("read a stale belt file")
+    except FileNotFoundError:
+        pass
     # start(): the target is checked before anything heats, one job at a time, never during a print
     install_state = lambda: (False, "")
     for bad in (None, "220", 22.5, 300, 100):
@@ -342,5 +362,9 @@ if __name__ == "__main__":   # self-check: python3 calibration.py
             break
         time.sleep(0.01)
     assert not _job["running"] and _job["error"] == "Klipper says no", _job
+    assert running() is None
+    _job.update(name="belts", running=True)
+    assert running() == "Belt check"
+    _job["running"] = False
     tmp.cleanup()
     print("ok")

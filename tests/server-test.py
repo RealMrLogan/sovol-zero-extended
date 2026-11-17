@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The config page's server (release/zero-config/server.py) run against a fake home: the cross-site refusal,
-input validation, and what it writes to zero-config.log. Nothing answers as Moonraker, so Klipper reads as
-down and every change that needs it is refused."""
+input validation, refusing changes while an install runs, and what it writes to zero-config.log. Nothing
+answers as Moonraker, so Klipper reads as down and every change that needs it is refused. A fake systemctl
+reports an install as running while the file INSTALLING exists."""
 import http.client, json, os, socket, subprocess, sys, tempfile, time
 
 ZC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "release", "zero-config")
@@ -11,6 +12,11 @@ with socket.socket() as s:
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
 SAME = {"Origin": "http://127.0.0.1:%d" % port, "Content-Type": "application/json"}   # the page itself
+BIN, INSTALLING = os.path.join(home.name, "bin"), os.path.join(home.name, "installing")
+os.makedirs(BIN)
+with open(os.path.join(BIN, "systemctl"), "w") as f:
+    f.write("#!/bin/sh\n[ -e %s ] && echo ActiveState=active || echo ActiveState=inactive\n" % INSTALLING)
+os.chmod(os.path.join(BIN, "systemctl"), 0o755)
 
 
 def req(method, path, body=None, headers=SAME):
@@ -31,7 +37,7 @@ def check(name, got, want):
 
 
 srv = subprocess.Popen([sys.executable, "-B", "server.py", str(port)], cwd=ZC,
-                       env=dict(os.environ, HOME=home.name), stderr=subprocess.DEVNULL)
+                       env=dict(os.environ, HOME=home.name, PATH=BIN + os.pathsep + os.environ["PATH"]), stderr=subprocess.DEVNULL)
 try:
     for _ in range(100):
         try:
@@ -54,6 +60,12 @@ try:
     check("bad PID target", req("POST", "/api/calibration/pid-bed", json.dumps({"target": 300}))[0], 400)
     check("empty upload", req("POST", "/api/update/upload", b"")[0], 411)
     check("unknown path", req("POST", "/api/nope", "{}")[0], 404)
+
+    open(INSTALLING, "w").close()
+    status, body = req("POST", "/api/settings/motor-current", quiet)
+    check("setting refused during an install", (status, json.loads(body)["error"]), (409, "not now: an install is running"))
+    check("refusal not logged as a change", "setting motor-current" in log(), False)
+    os.remove(INSTALLING)
 
     status, body = req("POST", "/api/settings/motor-current", quiet)
     check("setting refused while Klipper is down", (status, json.loads(body)["error"]), (500, "not now: Klipper is not ready"))
