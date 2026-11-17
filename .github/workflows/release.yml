@@ -30,12 +30,15 @@ jobs:
           printf '%s\n' 'deb http://archive.debian.org/debian bullseye main' \
                         'deb http://archive.debian.org/debian-security bullseye-security main' > /etc/apt/sources.list
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates git make cpp python3 gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi curl rsync shellcheck
+          apt-get install -y --no-install-recommends ca-certificates git make cpp python3 gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi curl rsync xz-utils
           arm-none-eabi-gcc --version | head -1
-          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C /tmp
-          echo /tmp/gh_2.63.2_linux_amd64/bin >> "$GITHUB_PATH"
+          curl -fsSL https://github.com/cli/cli/releases/download/v2.104.0/gh_2.104.0_linux_amd64.tar.gz | tar -xz -C /tmp
+          echo /tmp/gh_2.104.0_linux_amd64/bin >> "$GITHUB_PATH"
+          # the shellcheck tools/test.sh is checked with locally; Debian 11's 0.7.1 warns about things it doesn't
+          curl -fsSL https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz | tar -xJ -C /tmp
+          echo /tmp/shellcheck-v0.11.0 >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           fetch-depth: 0    # tags, for the nightly version
