@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-log() { echo "==> $*"; }
+log() { echo "==> $(date +%T) $*"; }
 mf() { python3 -c "import json; d=json.load(open('manifest.json')); print($1)"; }
 moon() { curl -sf "http://localhost:7125/$1"; }
 klipper_state() { moon printer/info | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["state"])' 2>/dev/null || echo down; }
@@ -47,7 +47,7 @@ running_version() {   # board -> mcu_version reported by the running firmware
 }
 
 version=$(mf 'd["version"]')
-log "$(date '+%F %T') installing sovol-zero-extended $version"
+log "installing sovol-zero-extended $version ($(date +%F))"
 
 log "verifying files"
 sha256sum --quiet -c SHA256SUMS
@@ -173,9 +173,17 @@ for name in $pipapps; do   # offline: only the wheels in the release; packages a
     venv=$HOME/${apip[$name]%%:*}
     mkdir -p "$backup/venvs"
     cp -a "$venv" "$backup/venvs/$name"
+    before=$("$venv/bin/pip" freeze --disable-pip-version-check)
     "$venv/bin/pip" install -q --disable-pip-version-check --no-index --find-links "$PWD/apps/wheels" \
         -r "$HOME/$name/${apip[$name]#*:}"
     log "$name: Python requirements installed"
+    python3 - <(echo "$before") <("$venv/bin/pip" freeze --disable-pip-version-check) <<'EOF'
+import sys
+a, b = ({l.split("==")[0].lower(): l.strip().split("==")[1] for l in open(p) if "==" in l} for p in sys.argv[1:])
+for name in sorted(a.keys() | b.keys()):
+    if a.get(name) != b.get(name):
+        print("    %s %s -> %s" % (name, a.get(name, "(new)"), b.get(name, "(removed)")))
+EOF
 done
 
 dropin=$ROOT/etc/systemd/system/crowsnest.service.d/zero-extended.conf

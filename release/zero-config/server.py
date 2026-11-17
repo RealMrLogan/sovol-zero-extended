@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # sovol-zero-extended config page backend. Runs on the printer as the sovol user, on localhost only;
 # nginx serves it at /extended/ after Moonraker's /access/user check (same trust as Mainsail).
-import json, os, re, subprocess, sys
+import json, logging, logging.handlers, os, re, subprocess, sys
 from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import calibration
@@ -9,6 +9,8 @@ from settings import SETTINGS, choices
 from updates import MAX_UPLOAD, install_args, save_upload, start_install, status, update_status
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+LOG = os.path.expanduser("~/printer_data/logs/zero-config.log")   # next to Klipper's, so Mainsail lists it
+log = logging.getLogger("zero-config")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -65,7 +67,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.post_calibration(m.group(1))
         m = re.fullmatch(r"/api/settings/([a-z-]+)", self.path)
         if m and m.group(1) in SETTINGS:
-            return self.post_setting(SETTINGS[m.group(1)])
+            return self.post_setting(m.group(1), SETTINGS[m.group(1)])
         self.send(404, {"error": "not found"})
 
     def post_upload(self):
@@ -87,13 +89,16 @@ class Handler(BaseHTTPRequestHandler):
             args = json.loads(body).get("args", []) if body else []
             if not isinstance(args, list):
                 raise ValueError("args must be a list")
+            pending = update_status()["pending"] or {}
             start_install(install_args(args))
         except (ValueError, AttributeError) as e:
             return self.send(400, {"error": str(e)})
         except RuntimeError as e:
             return self.send(409, {"error": str(e)})
         except (OSError, subprocess.CalledProcessError) as e:
+            log.exception("install: could not start")
             return self.send(500, {"error": str(e)})
+        log.info("install: started %s %s (its log: ~/zero-extended/install.log)", pending.get("version"), " ".join(args))
         self.send(200, update_status())
 
     def post_calibration(self, name):
@@ -107,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(409, {"error": str(e)})
         self.send(200, calibration.status())
 
-    def post_setting(self, s):
+    def post_setting(self, key, s):
         try:
             value = json.loads(self.rfile.read(max(self.body_length(), 0)))["value"]
         except (ValueError, KeyError, TypeError):
@@ -115,9 +120,15 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(value, str) or value not in choices(s):   # trust boundary: only known values reach set()
             return self.send(400, {"error": "invalid value"})
         try:
+            old = s["get"]()
+        except Exception:
+            old = "unknown"
+        log.info("setting %s: %s -> %s", key, old, value)
+        try:
             s["set"](value)
             self.send(200, {"value": s["get"]()})
         except Exception as e:
+            log.exception("setting %s: failed", key)
             self.send(500, {"error": str(e)})
 
     def log_message(self, fmt, *args):
@@ -126,4 +137,9 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 7130
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(LOG, maxBytes=1 << 20, backupCount=2)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
+    log.info("started on port %d", port)
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

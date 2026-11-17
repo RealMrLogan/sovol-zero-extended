@@ -4,6 +4,10 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- Logging: the config page writes `~/printer_data/logs/zero-config.log` (listed in Mainsail with Klipper's
+  logs): setting changes (old -> new), calibration start, result and failures with their traceback, and
+  install starts. Before, these were only on the page, or in a journal Sovol caps at 20 MB (about 30 min).
+  The install log timestamps every line and lists the Python packages an install changed (old -> new).
 - install.sh installs an app's Python requirements when its pin changes them (`apps.conf`'s new pip
   column), offline, from wheels shipped in the release (`apps/wheels`). It backs up the app's venv first and
   restores it on rollback. Before, any pin that touched a dependency file was refused.

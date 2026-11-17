@@ -1,11 +1,12 @@
 # Calibrations run from the config page, one at a time, in a background thread: input shaping, a CoreXY
 # belt comparison and heater PID tuning. Results are saved with Klipper's own SAVE_CONFIG; Klipper is
 # restarted first so nothing else that's pending (Sovol's per-print eddy calibration) gets saved with them.
-import csv, json, math, os, re, threading, time
+import csv, json, logging, math, os, re, threading, time
 import moonraker, tuning
 from updates import install_state
 
 RESULTS = os.path.expanduser("~/zero-extended/calibration.json")
+log = logging.getLogger("zero-config")   # server.py writes it to zero-config.log
 PART_FAN = "fan0"            # Sovol's part cooling fan ([fan_generic fan0])
 SOVOL_BED_KP = 53.071        # Sovol's factory bed PID, still in printer.cfg until it's tuned
 BELT_FILES = {"a": "/tmp/resonances_axis=1.000,1.000_zx_belt_a.csv", "b": "/tmp/resonances_axis=1.000,-1.000_zx_belt_b.csv"}
@@ -184,14 +185,18 @@ def start(name, target=None):
         if reason:
             raise RuntimeError(reason)
         _job.update(name=name, running=True, start=time.time(), error=None)
+    log.info("calibration %s: started%s", name, " at %d C" % target if heater else "")
     threading.Thread(target=_run, args=(name, fn, heater, target), daemon=True).start()
 
 
 def _run(name, fn, heater, target):
     try:
-        _save_result(name, run_pid(heater, target) if heater else fn(None))
+        result = run_pid(heater, target) if heater else fn(None)
+        _save_result(name, result)
+        log.info("calibration %s: done, %s", name, {k: v for k, v in result.items() if not isinstance(v, list)})
     except Exception as e:   # shown on the page; the thread must always clear "running"
         _job["error"] = str(e)
+        log.exception("calibration %s: failed", name)
     finally:
         _job["running"] = False
 
@@ -226,6 +231,7 @@ def status():
 
 
 if __name__ == "__main__":   # self-check: python3 calibration.py
+    logging.disable()   # the failure cases below log tracebacks on purpose
     out = parse_shaper([
         "Calculating the best input shaper parameters for x axis",
         "Fitted shaper 'mzv' frequency = 72.8 Hz (vibrations = 2.6%, smoothing ~= 0.040)",

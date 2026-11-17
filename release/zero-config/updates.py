@@ -47,6 +47,9 @@ def read_json(path):
         return json.load(f)
 
 
+FINISHED = re.compile(r"^==> (\d\d:\d\d:\d\d )?installed sovol-zero-extended ", re.M)   # untimed: v0.3.0 and older
+
+
 def update_status():
     running, result = install_state()
     log = ""
@@ -59,7 +62,7 @@ def update_status():
     pending = read_json(PENDING) if os.path.exists(PENDING) else None
     # A finished transient unit is unloaded, so its Result is "" after a success but also after it was
     # killed (power loss, reboot); only install.sh's last line tells them apart.
-    finished = re.search(r"^==> installed sovol-zero-extended ", log, re.M)
+    finished = FINISHED.search(log)
     return {"pending": pending, "running": running, "log": log,
             "result": None if running or not log else
                       ("success" if finished and result in ("success", "") else "failed")}
@@ -137,6 +140,9 @@ if __name__ == "__main__":   # self-check of the trust-boundary parsers: python3
     import tempfile
     tmp = tempfile.TemporaryDirectory()
     assert install_args([]) == []
+    assert FINISHED.search("x\n==> 03:16:22 installed sovol-zero-extended v1\n")
+    assert FINISHED.search("==> installed sovol-zero-extended v1\n")
+    assert not FINISHED.search("==> 03:16:22 installing sovol-zero-extended v1 (2026-11-17)\n")
     assert install_args(["--force-flash", "toolhead", "--no-flash"]) == ["--force-flash", "toolhead", "--no-flash"]
     for bad in (["--force-flash"], ["--force-flash", "x"], ["--rm"], [1], ["--no-flash", ";reboot"]):
         try:

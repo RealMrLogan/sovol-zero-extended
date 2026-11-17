@@ -45,7 +45,11 @@ setup() {
     g init -q; echo 'tornado==1' > "$A/scripts/moonraker-requirements.txt"; g add -A; g commit -qm stock
     echo 'tornado==2' > "$A/scripts/moonraker-requirements.txt"; g commit -qam pin
     PIN=$(g rev-parse HEAD); STOCK=$(g rev-parse HEAD~1); g checkout -q "$STOCK"
-    printf '#!/usr/bin/env bash\necho "$*" >> %s/pip.log; touch "$(dirname "$0")/../installed"\n' "$t" > "$H/moonraker-env/bin/pip"
+    cat > "$H/moonraker-env/bin/pip" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = freeze ]; then [ -e "\$(dirname "\$0")/../installed" ] && echo tornado==2 || echo tornado==1; exit; fi
+echo "\$*" >> $t/pip.log; touch "\$(dirname "\$0")/../installed"
+EOF
     chmod +x "$H/moonraker-env/bin/pip"
     { grep "^mainsail " "$REPO/release/apps.conf"; echo "moonraker git x $STOCK $PIN moonraker moonraker-env:scripts/moonraker-requirements.txt"; } > "$REL/apps.conf"
     if [ -z "${NOWHEELS:-}" ]; then mkdir -p "$REL/apps/wheels"; touch "$REL/apps/wheels/tornado-2-py3-none-any.whl"; fi
@@ -107,6 +111,8 @@ has "$t/systemctl.log" "restart klipper"
 has "$t/systemctl.log" "restart moonraker"
 [ "$(git -C "$H/moonraker" rev-parse HEAD)" = "$PIN" ] || fail "moonraker not at its pin"
 has "$t/pip.log" "--no-index --find-links $REL/apps/wheels -r $H/moonraker/scripts/moonraker-requirements.txt"
+has "$t/out" "    tornado 1 -> 2"
+grep -qE '^==> [0-9]{2}:[0-9]{2}:[0-9]{2} installed sovol-zero-extended v9.9.9$' "$t/out" || fail "no timed success line"
 
 echo "== re-install changes nothing"
 cp "$CFG/printer.cfg" "$t/installed.cfg"
