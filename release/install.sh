@@ -12,6 +12,7 @@ STATE=$HOME/zero-extended          # installed version, manifest, backups, insta
 PRINTER_CFG=$HOME/printer_data/config/printer.cfg
 PATCH_CFG=$HOME/patch/config/printer.cfg   # Sovol's copy, restored by the display's factory reset
 OUR_CFG=$HOME/printer_data/config/zero-extended
+ROOT=${ZX_ROOT:-}   # tests/install-test.sh only: a fake / for the /etc and /boot files
 mkdir -p "$STATE/backup"
 exec > >(tee -a "$STATE/install.log") 2>&1
 
@@ -120,16 +121,16 @@ restart_services() {   # each on its own, so one bad unit can't stop the others 
 # Undoes klippy/, the apps, the config page and zero-extended.cfg. Left as installed on purpose: the crowsnest
 # drop-in, the zero-config unit and nginx snippet (both compatible with older releases) and the Sovol updater
 # removal (one-way).
-restore_host() {
+restore_host() {   # rsync -c: a release file can match the backup's size and mtime
     trap - ERR
     log "restoring the previous klippy/ and apps"
-    rsync -a --delete "$backup/klippy/" "$KLIPPER/klippy/"
+    rsync -ac --delete "$backup/klippy/" "$KLIPPER/klippy/"
     if [ -f "$backup/apps.prev" ]; then
         while read -r name ref; do git -C "$HOME/$name" checkout -q "$ref" || log "$name: could not return to $ref"; done < "$backup/apps.prev"
     fi
-    for d in "$backup"/apps/*/; do if [ -d "$d" ]; then rsync -a --delete "$d" "$HOME/$(basename "$d")/"; fi; done
+    for d in "$backup"/apps/*/; do if [ -d "$d" ]; then rsync -ac --delete "$d" "$HOME/$(basename "$d")/"; fi; done
     for name in $stashed; do git -C "$HOME/$name" stash pop -q || log "$name: local changes kept in git stash"; done
-    if [ -d "$backup/zero-config" ]; then rsync -a --delete "$backup/zero-config/" "$STATE/zero-config/"; fi
+    if [ -d "$backup/zero-config" ]; then rsync -ac --delete "$backup/zero-config/" "$STATE/zero-config/"; fi
     if [ -f "$backup/klipper-config/printer.cfg" ]; then   # a bad zero-extended.cfg would keep Klipper down
         cp -p "$backup/klipper-config/printer.cfg" "$PRINTER_CFG"
         if [ -f "$backup/klipper-config/patch-printer.cfg" ]; then cp -p "$backup/klipper-config/patch-printer.cfg" "$PATCH_CFG"; fi
@@ -166,8 +167,8 @@ for name in "${apps[@]}"; do
 done
 if [ ${#apps[@]} = 0 ] && [ -z "$dirty" ]; then echo "(all apps already at their pins)"; fi
 
-dropin=/etc/systemd/system/crowsnest.service.d/zero-extended.conf
-if [ -f /etc/systemd/system/crowsnest.service ] && ! cmp -s systemd/crowsnest-zero.conf "$dropin"; then
+dropin=$ROOT/etc/systemd/system/crowsnest.service.d/zero-extended.conf
+if [ -f "$ROOT"/etc/systemd/system/crowsnest.service ] && ! cmp -s systemd/crowsnest-zero.conf "$dropin"; then
     sudo -n install -D -m644 systemd/crowsnest-zero.conf "$dropin"
     sudo -n systemctl daemon-reload
     log "crowsnest: start delay installed as a systemd drop-in"
@@ -180,13 +181,13 @@ if [ -n "$page_changes" ]; then
     restart+=" zero-config"; log "config page: updated"
 fi
 unit=$(sed "s|@USER@|$(id -un)|; s|@HOME@|$HOME|" zero-config/zero-config.service)
-if [ "$unit" != "$(cat /etc/systemd/system/zero-config.service 2>/dev/null)" ]; then
-    echo "$unit" | sudo -n tee /etc/systemd/system/zero-config.service >/dev/null
+if [ "$unit" != "$(cat "$ROOT"/etc/systemd/system/zero-config.service 2>/dev/null)" ]; then
+    echo "$unit" | sudo -n tee "$ROOT"/etc/systemd/system/zero-config.service >/dev/null
     sudo -n systemctl daemon-reload
     sudo -n systemctl enable -q zero-config
     restart+=" zero-config"; log "config page: service installed"
 fi
-site=/etc/nginx/sites-available/mainsail; snippet=/etc/nginx/snippets/zero-extended.conf
+site=$ROOT/etc/nginx/sites-available/mainsail; snippet=$ROOT/etc/nginx/snippets/zero-extended.conf
 if ! cmp -s zero-config/nginx.conf "$snippet" || ! grep -q "include $snippet;" "$site"; then
     cp "$site" "$backup/nginx-mainsail"
     sudo -n install -D -m644 zero-config/nginx.conf "$snippet"
@@ -200,14 +201,14 @@ fi
 # Sovol's updaters work around this installer (no version check, no rollback); releases come from /extended/
 # only. OTA: ota_service.sh, started at boot by btt_init.sh, installs Sovol's package when _OTA signals it.
 # _MCU_UP / _EXTRUDER_MCU_UP / _EXTRA_MCU_UP: flash a board with whatever image the OTA package left behind.
-boot=/boot/scripts/btt_init.sh
+boot=$ROOT/boot/scripts/btt_init.sh
 if grep -qs 'ota_service\.sh' "$boot"; then
     sudo -n sed -i '/ota_service\.sh/d' "$boot"; log "Sovol updaters: OTA removed from boot"
 fi
 # the pattern can't match this pkill's own command line (its "\." isn't ".")
 if sudo -n pkill -f '\./ota_service\.sh$'; then log "Sovol updaters: OTA stopped"; fi
 build=$HOME/printer_data/build   # keep flash_can.py: flash-board.sh uses it
-for f in /boot/scripts/ota_service.sh "$HOME/ota_client.sh" "$HOME/pyhelper/ota_process.py" "$build/mcu_update_fw.sh" \
+for f in "$ROOT"/boot/scripts/ota_service.sh "$HOME/ota_client.sh" "$HOME/pyhelper/ota_process.py" "$build/mcu_update_fw.sh" \
          "$build/extruder_mcu_update_fw.sh" "$build/extra_mcu_update_fw.sh" "$build/extruder_mcu_klipper.bin"; do
     if [ -e "$f" ]; then sudo -n rm -f "$f"; log "Sovol updaters: removed $f"; fi
 done

@@ -18,6 +18,10 @@ Each `## vX.Y.Z` section becomes that release's notes.
 - Config page: refuses cross-site POSTs. Moonraker trusts every LAN address, so before this any web page open
   on the LAN could upload and install a release. Malformed requests now get a 400 instead of a dropped
   connection, and an install that was killed (power loss, reboot) no longer shows as successful.
+- install.sh: a rollback compares file contents when restoring klippy/, the apps and the config page. Before,
+  a release file with the same size and timestamp as the one it replaced was left in place.
+- Tests: `tools/test.sh` runs the config page's self-checks, an install.sh test against a fake printer
+  (install, re-install, refusal during a print, rollback) and shellcheck; CI runs it before every build.
 - install.sh: if a board fails, every board flashed so far goes back to its previous image before the host is
   restored, so old host code never runs against new board firmware. Previous images are copied into the
   backup first (the "last flashed" record is overwritten during the install).

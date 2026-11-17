@@ -1,3 +1,4 @@
+# shellcheck shell=bash disable=SC2034   # sourced by the tools/ scripts, which use its variables
 # Shared helpers for the tools/ scripts. Override the printer with PRINTER=user@host.
 PRINTER=${PRINTER:-sovol@192.168.1.130}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

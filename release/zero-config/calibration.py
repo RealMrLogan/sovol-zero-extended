@@ -247,4 +247,94 @@ if __name__ == "__main__":   # self-check: python3 calibration.py
     assert "belt A's main peak is lower" in loose["verdict"], loose["verdict"]
     odd = compare_belts(spectrum((52, 2, 1), (71, 3, .7)), spectrum((52, 2, 1), (71, 3, .2)))
     assert "belt A at 70 Hz" in odd["verdict"] or "belt A at 72 Hz" in odd["verdict"], odd["verdict"]
+
+    # the job flow against a fake Moonraker: what it sends, and what it saves
+    import tempfile
+    tmp = tempfile.TemporaryDirectory()
+    RESULTS = os.path.join(tmp.name, "calibration.json")
+    tuning.TUNING, tuning.OURS = os.path.join(tmp.name, "tuning.json"), os.path.join(tmp.name, "zx.cfg")
+
+    class Fake:
+        def __init__(self, pending=(), replies=(), fail=None, busy=None, also=()):   # also: sections a calibration adds
+            self.sent, self.pending, self.replies, self.fail, self.why = [], set(pending), list(replies), fail, busy
+            self.also = set(also)
+
+        def gcode(self, script, timeout=0):
+            self.sent.append(script)
+            if self.fail and script.startswith(self.fail):
+                raise RuntimeError("Klipper says no")
+            if script.startswith(("PID_CALIBRATE HEATER=", "SHAPER_CALIBRATE")):
+                self.pending |= {script.split("=")[1].split()[0]} if "HEATER" in script else {"input_shaper"}
+                self.pending |= self.also
+
+        def restart(self):
+            self.sent.append("restart")
+            self.pending = set()
+
+        def save_config(self):
+            self.sent.append("SAVE_CONFIG")
+
+        def install(self):
+            for name in ("gcode", "restart", "save_config"):
+                setattr(moonraker, name, getattr(self, name))
+            moonraker.pending_saves = lambda: set(self.pending)
+            moonraker.responses_since = lambda t: self.replies
+            moonraker.query = lambda *o: {"toolhead": {"homed_axes": ""}}
+            moonraker.busy = lambda: self.why
+            return self
+
+    pid = "PID parameters: pid_Kp=32.678 pid_Ki=3.890 pid_Kd=68.619"
+    # an unrelated pending save (Sovol's eddy calibration) is cleared first, so only ours is saved
+    m = Fake(pending={"probe_eddy_current"}, replies=[pid]).install()
+    assert run_pid("extruder", 220) == {"kp": 32.678, "ki": 3.89, "kd": 68.619, "target": 220}
+    assert m.sent == ["restart", "SET_FAN_SPEED FAN=fan0 SPEED=0.6", "PID_CALIBRATE HEATER=extruder TARGET=220",
+                      "SET_FAN_SPEED FAN=fan0 SPEED=0", "TURN_OFF_HEATERS", "SAVE_CONFIG"], m.sent
+    # a failed calibration still turns the fan and heaters off, and saves nothing
+    m = Fake(fail="PID_CALIBRATE").install()
+    try:
+        run_pid("extruder", 220)
+        raise AssertionError("no error")
+    except RuntimeError:
+        pass
+    assert m.sent[-2:] == ["SET_FAN_SPEED FAN=fan0 SPEED=0", "TURN_OFF_HEATERS"] and "SAVE_CONFIG" not in m.sent
+    # something else pending at save time: refuse rather than save it too
+    m = Fake(replies=[pid], also={"bed_mesh"}).install()
+    try:
+        run_pid("heater_bed", 60)
+        raise AssertionError("saved an unexpected section")
+    except RuntimeError as e:
+        assert "bed_mesh" in str(e) and "SAVE_CONFIG" not in m.sent, e
+    # input shaping: homes, saves, and sets the "From input shaping" acceleration from the softer axis
+    m = Fake(replies=["Calculating the best input shaper parameters for x axis",
+                      "To avoid too much smoothing with 'mzv', suggested max_accel <= 15400 mm/sec^2",
+                      "Recommended shaper_type_x = mzv, shaper_freq_x = 72.4 Hz",
+                      "Calculating the best input shaper parameters for y axis",
+                      "To avoid too much smoothing with 'mzv', suggested max_accel <= 8345 mm/sec^2",
+                      "Recommended shaper_type_y = mzv, shaper_freq_y = 53.0 Hz"]).install()
+    run_shaper(None)
+    assert m.sent == ["G28", "SHAPER_CALIBRATE", "SAVE_CONFIG"], m.sent
+    assert tuning.load()["auto_accel"] == 8300
+    # start(): the target is checked before anything heats, one job at a time, never during a print
+    install_state = lambda: (False, "")
+    for bad in (None, "220", 22.5, 300, 100):
+        try:
+            start("pid-nozzle", bad)
+            raise AssertionError("accepted target %r" % bad)
+        except ValueError:
+            pass
+    Fake(busy="a print is running").install()
+    try:
+        start("belts")
+        raise AssertionError("started during a print")
+    except RuntimeError as e:
+        assert "print" in str(e)
+    # a job that fails reports its error and frees the slot for the next one
+    m = Fake(fail="PID_CALIBRATE").install()
+    start("pid-bed", 60)
+    for _ in range(100):
+        if not _job["running"]:
+            break
+        time.sleep(0.01)
+    assert not _job["running"] and _job["error"] == "Klipper says no", _job
+    tmp.cleanup()
     print("ok")
