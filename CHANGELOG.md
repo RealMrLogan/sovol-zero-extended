@@ -4,6 +4,8 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- Klipper: Sovol's pressure probe module (patch 0005, `probe_pressure.py`) is removed. Sovol stopped using it
+  in 1.4.2 and no config loads it; the next install deletes it from `~/klipper/klippy/extras/`.
 - Logging: the config page writes `~/printer_data/logs/zero-config.log` (listed in Mainsail with Klipper's
   logs): setting changes (old -> new), calibration start, result and failures with their traceback, and
   install starts. Before, these were only on the page, or in a journal Sovol caps at 20 MB (about 30 min).

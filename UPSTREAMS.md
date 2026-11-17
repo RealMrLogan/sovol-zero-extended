@@ -156,7 +156,7 @@ Moonraker from it on another port.
 | 0002 fixed chip ids | not upstream | clean | keep (CAN uuids in printer.cfg depend on it) |
 | 0003 UC1701 fonts, menus, ws2811 | not upstream | i2ccmds.c 2/37, stm32/i2c.c 8/123 | keep screen parts; re-port the F1 i2c errata onto upstream's new i2c status codes |
 | 0004 eddy contact homing | superseded by upstream "tap" (5c23f9296, 0795fb014, `tap_z_offset` 6c8c8d24d, `PROBE_EDDY_CURRENT_TAP_CALIBRATE` ef7b13b1f) and `trigger_analog` | probe_eddy_current.py 10/669, sensor_ldc1612.c 5/204, ldc1612.py 5/87, probe.py 4/62, homing.py 2/17, bed_mesh.py 1/5 | **rewrite on upstream tap**; keep a thin `z_offset_calibration` wrapper only if the stock screen's calibration flow needs it |
-| 0005 pressure probe | unused by the printer | clean | **drop** |
+| 0005 pressure probe | unused by the printer | clean | dropped (2026-11-16) |
 | 0006 shutdown / tip codes | not upstream | idle_timeout 1/16, lis2dw 1/60 | keep, small rework |
 | 0007 scheduling / move queue | not upstream (`TRSYNC_TIMEOUT` still 0.025) | mcu.py 1/86 | keep move queue and `debug_shut`; re-decide the disabled "Timer too close" shutdown |
 | 0008 assorted host | toolhead timing hunk obsolete (constants moved to `extras/motion_queuing.py`) | configfile 2/233, toolhead 1/22, gcode_move 1/26, chelper 1/17, extruder 1/6, resonance_tester 1/7 | split: keep shell command, power-loss resume, paths; **drop** the chelper "don't rebuild" hunk (chelper changed 1,163 lines, so Sovol's prebuilt `c_helper.so` won't match), the toolhead hunk and the `-backup` hacks |
@@ -223,7 +223,7 @@ restarts, but that file is user data.
 
 ## Customizations that go away
 
-- Klipper patches 0001 and 0005; 0008's chelper, toolhead and `-backup` hunks; most of 0004.
+- Klipper patch 0001 (0005 is already gone); 0008's chelper, toolhead and `-backup` hunks; most of 0004.
 - moonraker-obico entirely (step 2).
 - The byte-identical check moves from the release build to a frozen job.
 
