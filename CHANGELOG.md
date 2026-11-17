@@ -2,7 +2,7 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
-## Unreleased
+## v0.3.0
 
 - moonraker-obico is removed (it was never linked): its service, `~/moonraker-obico` and its venv, its
   config files and `printer.cfg` include, its macros in `get_ip.cfg` (live and factory-reset copies) and the
