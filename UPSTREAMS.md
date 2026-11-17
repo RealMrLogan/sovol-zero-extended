@@ -264,9 +264,10 @@ already-imported modules.
 - **Toolhead must be reflashed.** Verified in batch mode: master against the stock toolhead dictionary
   fails on `trigger_analog_query_state`, then `config_lis2dw`. Unpatched v0.13.0 fails too (Sovol added
   `homing_method` to `ldc1612_setup_home`). Carrying Sovol's protocol forward isn't practical.
-- **Mainboard can stay on stock at first.** Master configured the stock mainboard dictionary (with the
-  toolhead-only sections removed). Config phase only; runtime untested. Expect "deprecated MCU code"
-  warnings until it's reflashed.
+- **Mainboard built from master too** (`boards.conf: build`). Master configures the stock mainboard
+  dictionary, but the stock image has Sovol's older protocol. The master image runs the H750 at 480 MHz, not
+  stock's 400 (upstream `43f9219cf`; `CLOCK_FREQ` has no prompt, so `configs/mainboard.config`'s value is
+  ignored). Flashed and power-cycled on hardware 2026-11-17: both boards and the CAN bridge came back.
 - **Reproducibility check:** the byte-identical toolhead check proves the extraction of Sovol's tree, not
   the new image. Keep it as a frozen CI job (old pin + current patches moved to e.g. `patches-stock/`).
   The new toolhead image becomes `boards.conf: build`.
