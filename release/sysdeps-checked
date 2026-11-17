@@ -2,3 +2,6 @@
 # make-release.sh refuses any other pin that changes them, since install.sh can't install system packages.
 # crowsnest cf936da: pkglist-*.sh adds pkg-config, used only to build ustreamer (the printer keeps its build)
 crowsnest cf936dabdcf6a3d1eb0138d8eea9044745b40db6
+# moonraker b559b9a: system-dependencies.json adds iw (Ubuntu >= 24.10) and python3-libcamera (Raspberry Pi)
+# only, and keeps wireless-tools for Debian; the printer is Debian 11 and already has wireless-tools and iw
+moonraker b559b9a81161f958a43c2f527b6ad96f73310d5d

@@ -15,7 +15,7 @@ dictionaries). "Inferred" marks what was read in code but not run.
 | crowsnest | `d75a3ae` (v4.1.9-1) | v5 (`436042452f564f3d737e3b980a213f849a8a0562` = v5.0.12); master `cf936dabdcf6a3d1eb0138d8eea9044745b40db6` (v4.2.0 + a changelog commit) as a stepping stone | apt + venv in install.sh |
 | moonraker-obico | `4c0b7b6` | **removed** (not used) | removal steps below |
 | moonraker-timelapse | `c7fff11` | `c7fff11` (upstream `main` hasn't moved) | none |
-| Moonraker | `4e00a07` (v0.9.3-1) | `b559b9a81161f958a43c2f527b6ad96f73310d5d` (v0.11.0+4) | pip deps in install.sh |
+| Moonraker | `4e00a07` (v0.9.3-1) | `b559b9a81161f958a43c2f527b6ad96f73310d5d` (v0.11.0+4) | **pinned** (step 3) |
 | KlipperScreen | `7127b5d6` (v0.4.5-3) | `26d262522b9bd9fe7d67f67d3c6f90aa156d1b07` (≈v0.4.8) | pip deps in install.sh |
 | Klipper | `faa89be` (2024-10-28) + patches | master (`29d4ec2d6` at research time) | patch rebase, probe rewrite, toolhead reflash |
 
@@ -107,9 +107,16 @@ Removal is one-way, like the OTA removal: rollback doesn't reinstall it.
 
 ## Step 3: Moonraker → `b559b9a`
 
+Pinned (2026-11-17), not yet released; rechecked, still upstream master. Tested on the printer before
+pinning: the wheels installed offline into a copy of `moonraker-env` (`pip check` clean; only apprise,
+dbus-fast, inotify-simple, Jinja2 and paho-mqtt changed), and `b559b9a` ran from it on port 7126 against
+the live Klipper: no failed components, history, timelapse and file APIs answer, `/access/user` gives 200
+for a LAN address forwarded by 127.0.0.1 and 401 for an outside one. System packages reviewed and listed in
+`release/sysdeps-checked`.
+
 - **Python:** pyproject says ≥3.10 (245f718), but the changelog says running from source (how the
-  printer runs it) still works on 3.7+. Verified: every file parses with the 3.9 grammar and the code
-  keeps its `sys.version_info < (3,10)` fallbacks. Not run on 3.9.
+  printer runs it) still works on 3.7+. Verified: every file parses with the 3.9 grammar, and it runs on
+  the printer's 3.9.2 (above).
 - **Deps:** `dbus-next` → `dbus-fast` (fccffa9). `dbus_manager` is core and imports it at load, so it must
   be installed or Moonraker won't start. Its startup "pip recovery" would try the network. Also apprise
   ≥1.9.3, paho-mqtt 2.1.0, inotify-simple 2.0.1, jinja2 3.1.6; pyserial-asyncio dropped. All have 3.9

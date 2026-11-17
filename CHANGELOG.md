@@ -4,6 +4,10 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- Moonraker v0.9.3 → v0.11.0 (`b559b9a`, 187 commits): security fixes in authorization (constant-time
+  credential checks, trusted-client checks now include the proxy's address), newer slicer metadata, and
+  the replacement of the unmaintained dbus-next. Its new Python packages ship in the release and install
+  offline. The database is unchanged, so rolling back to an older release keeps print history.
 - Config page: if power was lost just as an install started, the Update section failed to load until the
   next install. It now shows the whole install log instead.
 - Code cleanup, no behaviour change: the config page's JavaScript posts through one helper, the resonance
