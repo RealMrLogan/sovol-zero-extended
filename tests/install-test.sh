@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Runs release/install.sh against a fake printer: a temporary $HOME, a fake / for /etc and /boot (ZX_ROOT) and
-# stubs for Moonraker (curl), sudo, systemctl, nginx, pkill and sleep. No boards are flashed (--no-flash).
-# Checks a clean install, a re-install, a refusal during a print and the rollback when Klipper doesn't come back.
-# Moonraker is a git repo whose pin changes its requirements, with a venv whose pip only records its calls.
+# stubs for Moonraker (curl), sudo, systemctl, nginx, pkill, sleep and dpkg (packages are files in $t/dpkg).
+# No boards are flashed (--no-flash). Checks a clean install, a re-install, refusals (a print, missing wheels,
+# a package dpkg can't install or that's installed at another version) and the rollback when Klipper doesn't
+# come back. Moonraker is a git repo whose pin changes its requirements, with a venv whose pip only records its
+# calls. The release ships one .deb (fakepkg).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 t=$(mktemp -d); trap '[ -n "${KEEP:-}" ] || rm -rf "$t"' EXIT
@@ -30,7 +32,14 @@ setup() {
     printf 'server {\n    server_name _;\n}\n' > "$R/etc/nginx/sites-available/mainsail"
     printf 'keep\n/boot/scripts/ota_service.sh &\n' > "$R/boot/scripts/btt_init.sh"
     touch "$R/etc/systemd/system/crowsnest.service"
-    cp -a "$H" "$t/orig"
+    # Sovol's Moonraker env (legacy entry point) and an older KlipperScreen unit; upstream's template to fill in
+    mkdir -p "$H/printer_data/systemd" "$H/KlipperScreen/scripts" "$t/dpkg"
+    printf 'MOONRAKER_ARGS="%s/moonraker/moonraker/moonraker.py -d %s/printer_data"\n' "$H" "$H" > "$H/printer_data/systemd/moonraker.env"
+    printf '[Service]\nUser=sovol\n' > "$R/etc/systemd/system/KlipperScreen.service"
+    printf '[Service]\nUser=KS_USER\nEnvironment="KS_XCLIENT=KS_ENV/bin/python KS_DIR/screen.py" BACKEND=KS_BACKEND\nPAMName=%%u\n' \
+        > "$H/KlipperScreen/scripts/KlipperScreen.service"
+    if [ -n "${HAVE_PKG:-}" ]; then echo "$HAVE_PKG" > "$t/dpkg/fakepkg"; fi
+    cp -a "$H" "$t/orig"; cp -a "$R" "$t/origroot"
 
     mkdir -p "$REL/klipper/klippy" "$REL/apps/mainsail"
     cp -r "$REPO"/release/{install.sh,sovol-cleanup.sh,flash-board.sh,apps.conf,systemd,zero-config} "$REL/"
@@ -53,6 +62,8 @@ EOF
     chmod +x "$H/moonraker-env/bin/pip"
     { grep "^mainsail " "$REPO/release/apps.conf"; echo "moonraker git x $STOCK $PIN moonraker moonraker-env:scripts/moonraker-requirements.txt"; } > "$REL/apps.conf"
     if [ -z "${NOWHEELS:-}" ]; then mkdir -p "$REL/apps/wheels"; touch "$REL/apps/wheels/tornado-2-py3-none-any.whl"; fi
+    mkdir -p "$REL/debs"; touch "$REL/debs/fakepkg_1.0_arm64.deb"
+    echo "fakepkg 1.0 - https://example.invalid/fakepkg_1.0_arm64.deb" > "$REL/debs.conf"
     (cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
 
     # Moonraker: Klipper's state and the print state come from FAKE_KLIPPER and FAKE_PRINT
@@ -68,6 +79,17 @@ esac'
     stub nginx ':'
     stub pkill 'exit 1'
     stub sleep ':'
+    # dpkg: a package is installed when $t/dpkg/<name> holds its version. apt-get -s simulates installing the
+    # .debs: FAKE_DPKG_FAIL = their dependencies are missing, FAKE_APT_EXTRA = it would also install another package
+    stub apt-get "[ -z \"\${FAKE_DPKG_FAIL:-}\" ] || { echo 'E: Unable to correct problems'; exit 100; }
+[ -z \"\${FAKE_APT_EXTRA:-}\" ] || echo 'Inst libextra (1 Debian)'
+for a; do case \$a in *.deb) b=\$(basename \"\$a\"); echo \"Inst \${b%%_*} (1 local-deb)\" ;; esac; done"
+    stub dpkg-query "f=$t/dpkg/\${!#}; [ -f \"\$f\" ] || exit 1; printf 'ii %s' \"\$(cat \"\$f\")\""
+    stub dpkg "echo \"\$*\" >> $t/dpkg.log
+case \$1 in
+    -i) shift; for d; do b=\$(basename \"\$d\" _arm64.deb); echo \"\${b#*_}\" > $t/dpkg/\${b%%_*}; done ;;
+    -P) rm $t/dpkg/\$2 ;;
+esac"
 }
 
 install() {   # FAKE_KLIPPER FAKE_PRINT: install.sh's exit code
@@ -113,6 +135,17 @@ has "$t/systemctl.log" "restart moonraker"
 has "$t/pip.log" "--no-index --find-links $REL/apps/wheels -r $H/moonraker/scripts/moonraker-requirements.txt"
 has "$t/out" "    tornado 1 -> 2"
 grep -qE '^==> [0-9]{2}:[0-9]{2}:[0-9]{2} installed sovol-zero-extended v9.9.9$' "$t/out" || fail "no timed success line"
+has "$t/dpkg/fakepkg" 1.0
+has "$H/printer_data/systemd/moonraker.env" 'MOONRAKER_ARGS="-m moonraker"'
+has "$H/printer_data/systemd/moonraker.env" "PYTHONPATH=\"$H/moonraker\""
+has "$H/printer_data/systemd/moonraker.env" "MOONRAKER_DATA_PATH=\"$H/printer_data\""
+U=$R/etc/systemd/system/KlipperScreen.service
+has "$U" "User=$(id -un)"
+has "$U" "KS_XCLIENT=$H/.KlipperScreen-env/bin/python $H/KlipperScreen/screen.py\" BACKEND=X"
+has "$U" "PAMName=%u"
+has "$t/systemctl.log" "restart KlipperScreen"
+cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$H"/zero-extended/backup/*/files"$U" ||
+    fail "old KlipperScreen unit not backed up under its own path"
 
 echo "== re-install changes nothing"
 cp "$CFG/printer.cfg" "$t/installed.cfg"
@@ -120,6 +153,9 @@ cp "$CFG/printer.cfg" "$t/installed.cfg"
 cmp -s "$t/installed.cfg" "$CFG/printer.cfg" || fail "re-install changed printer.cfg"
 [ "$(wc -l < "$t/pip.log")" = 1 ] || fail "re-install ran pip again"
 [ "$(grep -c 'zero-extended.conf;' "$R/etc/nginx/sites-available/mainsail")" = 1 ] || fail "nginx include added twice"
+[ "$(grep -c '^-i ' "$t/dpkg.log")" = 1 ] || fail "re-install ran dpkg -i again"
+lacks "$t/out" "service file updated"
+lacks "$t/out" "started as upstream does now"
 
 echo "== refused while printing"
 setup
@@ -132,6 +168,22 @@ NOWHEELS=1 setup
 [ "$(install ready standby)" = 1 ] || fail "installed without wheels"
 has "$t/out" "the release has no wheels"
 [ "$(git -C "$H/moonraker" rev-parse HEAD)" = "$STOCK" ] || fail "moonraker moved"
+
+echo "== refused when a package's dependencies are missing, or it would need another package"
+for v in FAKE_DPKG_FAIL FAKE_APT_EXTRA; do
+    setup; export "$v=1"
+    [ "$(install ready standby)" = 1 ] || fail "$v: installed anyway"
+    unset "$v"
+    has "$t/out" "can't install fakepkg from the release alone"
+    same klipper/klippy/klippy.py; [ ! -e "$t/dpkg/fakepkg" ] || fail "$v: fakepkg installed"
+done
+has "$t/out" "Inst libextra"
+
+echo "== refused when a package is installed at another version"
+HAVE_PKG=0.9 setup
+[ "$(install ready standby)" = 1 ] || fail "replaced an installed package"
+has "$t/out" "fakepkg 0.9 is installed, the release ships 1.0"
+same klipper/klippy/klippy.py; has "$t/dpkg/fakepkg" 0.9
 
 echo "== rollback when Klipper doesn't come back"
 setup
@@ -146,5 +198,8 @@ same printer_data/config/printer.cfg; same patch/config/printer.cfg
 [ ! -e "$H/moonraker-env/installed" ] || fail "moonraker-env not restored"
 [ "$(git -C "$H/moonraker" rev-parse HEAD)" = "$STOCK" ] || fail "moonraker not back at its old commit"
 has "$t/out" "FIRMWARE_RESTART"
+[ ! -e "$t/dpkg/fakepkg" ] || fail "fakepkg not removed"
+same printer_data/systemd/moonraker.env
+cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$R/etc/systemd/system/KlipperScreen.service" || fail "KlipperScreen unit not restored"
 
 echo "install-test ok"

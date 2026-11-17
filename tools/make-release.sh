@@ -52,7 +52,7 @@ find "$stage/klipper" \( -name '*.pyc' -o -name __pycache__ -o -name '*.so' \) -
 
 # upstream apps (release/apps.conf). A git app only needs a bundle once its pin moves past Sovol's stock
 # commit, which every Zero already has; the bundle carries just stock..pin, so installs work offline.
-# install.sh installs Python requirements (the pip column) from wheels, but can't install system packages.
+# install.sh installs Python requirements (the pip column) from wheels, and system packages only from debs.conf.
 . "$ROOT/tools/app-deps.sh"
 mkdir -p "$stage/apps"; wheels=""
 while read -r app type url stock pin _ pip; do
@@ -77,7 +77,13 @@ if [ -n "$wheels" ]; then
     echo "== wheels for$wheels: $(ls "$WHEELS" | wc -l) files"
     cp -r "$WHEELS" "$stage/apps/wheels"
 fi
-cp "$ROOT/release/apps.conf" "$stage/"
+mkdir -p "$stage/debs"   # system packages (release/debs.conf), checked against their pinned sha256
+while read -r pkg _ sha url; do
+    echo "== $pkg: ${url##*/}"
+    curl -fsSL "$url" -o "$stage/debs/${url##*/}"
+    echo "$sha  $stage/debs/${url##*/}" | sha256sum --quiet -c
+done < <(grep -v '^\s*#' "$ROOT/release/debs.conf" | grep .)
+cp "$ROOT/release/apps.conf" "$ROOT/release/debs.conf" "$stage/"
 cp -r "$ROOT/release/systemd" "$ROOT/release/zero-config" "$stage/"
 find "$stage/zero-config" -name __pycache__ -prune -exec rm -rf {} +
 

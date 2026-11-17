@@ -71,8 +71,8 @@ done
 
 # upstream apps (apps.conf): work out what changes, and make sure every pin is at hand, before touching anything
 log "checking upstream apps"
-# Python requirements (apps.conf pip column) are installed from the release's wheels. System packages can't
-# be: make-release refuses a pin that changes them, unless they were checked (release/sysdeps-checked).
+# Python requirements (apps.conf pip column) are installed from the release's wheels. System packages only
+# from debs.conf: make-release refuses a pin that changes them, unless they were checked (release/sysdeps-checked).
 apps=(); dirty=""; restart=""; pipapps=""; declare -A atype apin apip
 while read -r name type _ _ pin services pip; do
     dir=$HOME/$name; atype[$name]=$type; apin[$name]=$pin; apip[$name]=$pip; changed=0
@@ -99,6 +99,25 @@ while read -r name type _ _ pin services pip; do
     if [ $changed = 1 ]; then apps+=("$name"); [ "$services" = - ] || restart+=" $services"; fi
 done < <(grep -v '^\s*#' apps.conf | grep .)
 
+# system packages (debs.conf), from the release's .debs: only missing ones are added, and only if their
+# dependencies are already installed. The rollback purges them again.
+debs=""; debfiles=()
+while read -r pkg ver _ url; do
+    have=$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' "$pkg" 2>/dev/null || true)
+    if [ "$have" = "ii $ver" ]; then continue; fi
+    # shortcut: no upgrades of an installed package (the rollback would need its old .deb); add them when one is needed
+    if [[ $have == ii* ]]; then
+        echo "$pkg ${have#ii } is installed, the release ships $ver: install.sh only adds missing packages"; exit 1
+    fi
+    debs+=" $pkg"; debfiles+=("debs/${url##*/}"); log "$pkg: will install $ver"
+done < <(grep -v '^\s*#' debs.conf | grep .)
+if [ -n "$debs" ]; then   # dpkg --dry-run doesn't check dependencies; apt's simulation does, and must add nothing else
+    sim=$(apt-get -s -o Debug::NoLocking=1 install --no-install-recommends "${debfiles[@]/#/$PWD/}" 2>&1) || true
+    if [ "$(awk '$1 == "Inst" || $1 == "Remv" {print $1, $2}' <<<"$sim" | sort)" != "$(printf 'Inst %s\n' $debs | sort)" ]; then
+        echo "can't install$debs from the release alone:"; grep -E '^(Inst|Remv|E:)' <<<"$sim" || true; exit 1
+    fi
+fi
+
 sync_klippy() { rsync -rlptci --delete --exclude='*.pyc' --exclude=__pycache__ --exclude='*.so' --exclude=.version "$@" klipper/klippy/ "$KLIPPER/klippy/"; }
 # shortcut: Sovol disabled klippy's automatic c_helper.so rebuild, so refuse releases that change chelper C
 # until install.sh builds it; ">f" = content differs (".f" = timestamp only)
@@ -119,13 +138,24 @@ restart_services() {   # each on its own, so one bad unit can't stop the others 
     for s in klipper $restart; do sudo -n systemctl restart "$s" || rc=1; done
     return $rc
 }
-# Undoes klippy/, the apps, the config page and zero-extended.cfg. Left as installed on purpose: the crowsnest
-# drop-in, the zero-config unit and nginx snippet (both compatible with older releases) and the Sovol updater
-# removal (one-way).
+restart_add() { [[ " $restart " == *" $1 "* ]] || restart+=" $1"; }
+replaced=()   # files replace() changed; the previous copy of each is in $backup/files<its path>
+replace() {   # file content: write content to file as root, keeping the old file for restore_host
+    mkdir -p "$backup/files$(dirname "$1")"; sudo -n cp -p "$1" "$backup/files$1"
+    replaced+=("$1")
+    printf '%s\n' "$2" | sudo -n tee "$1" >/dev/null
+}
+# Undoes klippy/, the apps and their system packages, service files, the config page and zero-extended.cfg.
+# Left as installed on purpose: the crowsnest drop-in, the zero-config unit and nginx snippet (both compatible
+# with older releases) and the Sovol updater removal (one-way).
 restore_host() {   # rsync -c: a release file can match the backup's size and mtime
     trap - ERR
     log "restoring the previous klippy/ and apps"
     rsync -ac --delete "$backup/klippy/" "$KLIPPER/klippy/"
+    local f
+    for f in "${replaced[@]}"; do sudo -n cp -p "$backup/files$f" "$f" || log "$f: could not restore it"; done
+    if [ ${#replaced[@]} -gt 0 ]; then sudo -n systemctl daemon-reload; fi
+    for p in $debs_added; do sudo -n dpkg -P "$p" >/dev/null || log "$p: could not remove it"; done
     if [ -f "$backup/apps.prev" ]; then
         while read -r name ref; do git -C "$HOME/$name" checkout -q "$ref" || log "$name: could not return to $ref"; done < "$backup/apps.prev"
     fi
@@ -145,8 +175,15 @@ restore_host() {   # rsync -c: a release file can match the backup's size and mt
     wait_ready || true
 }
 stashed=""   # apps whose local changes this run stashed: the only stashes restore_host may pop
+debs_added=""   # packages this run installed: the only ones restore_host removes
 # from here on, anything failing unexpectedly puts klippy/ and the apps back before install.sh exits
 trap 'log "unexpected failure, rolling back"; restore_host' ERR
+
+if [ -n "$debs" ]; then
+    debs_added=$debs   # before dpkg: a failure can leave some of them installed
+    sudo -n dpkg -i "${debfiles[@]}" >/dev/null
+    log "system packages installed:$debs"
+fi
 
 log "installing apps"
 for name in "${apps[@]}"; do   # record every git app's branch/commit before changing any
@@ -186,6 +223,21 @@ for name in sorted(a.keys() | b.keys()):
         print("    %s %s -> %s" % (name, a.get(name, "(new)"), b.get(name, "(removed)")))
 EOF
 done
+
+# services, set up the way upstream's installers set them up now (a pin change alone doesn't touch them)
+menv=$HOME/printer_data/systemd/moonraker.env   # Sovol's runs moonraker/moonraker.py, the legacy entry point
+want=$(printf 'MOONRAKER_DATA_PATH="%s"\nMOONRAKER_ARGS="-m moonraker"\nPYTHONPATH="%s"' "$HOME/printer_data" "$HOME/moonraker")
+if [ -d "$HOME/moonraker" ] && [ -f "$menv" ] && [ "$want" != "$(cat "$menv")" ]; then
+    replace "$menv" "$want"; restart_add moonraker; log "moonraker: started as upstream does now (-m moonraker)"
+fi
+ksunit=$ROOT/etc/systemd/system/KlipperScreen.service; kstpl=$HOME/KlipperScreen/scripts/KlipperScreen.service
+if [ -f "$ksunit" ] && [ -f "$kstpl" ]; then   # upstream's template, filled in as its installer does (X: Sovol's backend)
+    want=$(sed "s|KS_USER|$(id -un)|g; s|KS_ENV|$HOME/.KlipperScreen-env|g; s|KS_DIR|$HOME/KlipperScreen|g; s|KS_BACKEND|X|g" "$kstpl")
+    if [ "$want" != "$(cat "$ksunit")" ]; then
+        replace "$ksunit" "$want"; sudo -n systemctl daemon-reload; restart_add KlipperScreen
+        log "KlipperScreen: service file updated from upstream's template"
+    fi
+fi
 
 dropin=$ROOT/etc/systemd/system/crowsnest.service.d/zero-extended.conf
 if [ -f "$ROOT"/etc/systemd/system/crowsnest.service ] && ! cmp -s systemd/crowsnest-zero.conf "$dropin"; then

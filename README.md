@@ -67,7 +67,10 @@ pinned commit (local edits are stashed, not lost), Mainsail is replaced by the p
 the zip then carries a git bundle from Sovol's stock commit to the pin, so installs don't need the network.
 When a pin changes an app's Python requirements (the pip column), the zip carries wheels built for the
 printer (`tools/build-wheels.sh`), installed offline into the app's venv, which is backed up and restored on
-rollback. A pin that changes system packages is refused at build time unless listed in `release/sysdeps-checked`.
+rollback. A pin that changes system packages is refused at build time unless listed in `release/sysdeps-checked`
+after a check by hand; packages the printer lacks are shipped as Debian's own `.deb`s (`release/debs.conf`,
+pinned by sha256), installed offline only if apt's simulation finds nothing else needed, and purged on rollback.
+install.sh also keeps Moonraker's and KlipperScreen's service setup as their upstream installers write it now.
 `release/boards.conf` picks per board whether a release ships the stock image or one built from `patches/`.
 Build locally on the printer: `TREE=<patched tree> tools/make-release.sh vX.Y.Z`.
 

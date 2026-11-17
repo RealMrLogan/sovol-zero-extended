@@ -4,6 +4,20 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- KlipperScreen v0.4.5 → current master (`a12e8dd`, 414 commits): lockscreen, fine-tune panel, Spoolman
+  editing, settings in categories, keyboard navigation, a rewritten network panel, and many fixes. Its
+  new Python packages ship in the release and install offline.
+- System packages: releases can now ship Debian's own `.deb`s (`release/debs.conf`, pinned by sha256),
+  installed offline only when apt's simulation finds their dependencies already there, and removed again on
+  rollback. The first two are KlipperScreen's: `gir1.2-nm-1.0`, so its network panel uses libnm rather than
+  its fallback, and `kbd`, for the `chvt` its service runs.
+- Services are set up as upstream's installers do now: KlipperScreen's service file comes from its own
+  template (a login session for the screen), and Moonraker starts with `-m moonraker` instead of its legacy
+  `moonraker.py` entry point. Both are restored on rollback. Installing an older release afterwards keeps
+  them; for KlipperScreen that breaks the screen on its next restart (its old start script under the new
+  service), so put Sovol's service file back first: copy the install's backup
+  (`~/zero-extended/backup/<install>/files/etc/systemd/system/KlipperScreen.service`) over
+  `/etc/systemd/system/KlipperScreen.service`, then `sudo systemctl daemon-reload`.
 - Moonraker v0.9.3 → v0.11.0 (`b559b9a`, 187 commits): security fixes in authorization (constant-time
   credential checks, trusted-client checks now include the proxy's address), newer slicer metadata, and
   the replacement of the unmaintained dbus-next. Its new Python packages ship in the release and install

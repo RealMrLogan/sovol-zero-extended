@@ -1,7 +1,11 @@
-# App pins whose system-package changes were checked by hand and need nothing on the printer: "<app> <pin>".
-# make-release.sh refuses any other pin that changes them, since install.sh can't install system packages.
+# App pins whose system-package changes were checked by hand: "<app> <pin>". Each needs nothing new on the
+# printer, or ships what it needs in release/debs.conf (install.sh installs no other system packages).
+# make-release.sh refuses any other pin that changes them.
 # crowsnest cf936da: pkglist-*.sh adds pkg-config, used only to build ustreamer (the printer keeps its build)
 crowsnest cf936dabdcf6a3d1eb0138d8eea9044745b40db6
 # moonraker b559b9a: system-dependencies.json adds iw (Ubuntu >= 24.10) and python3-libcamera (Raspberry Pi)
 # only, and keeps wireless-tools for Debian; the printer is Debian 11 and already has wireless-tools and iw
 moonraker b559b9a81161f958a43c2f527b6ad96f73310d5d
+# KlipperScreen a12e8dd: adds gir1.2-nm-1.0 (libnm's GObject bindings), which the printer lacks: shipped in
+# release/debs.conf, so its network panel uses libnm rather than its sdbus fallback
+KlipperScreen a12e8dde55d79774f9dfc5c59a61854f3f5c0184

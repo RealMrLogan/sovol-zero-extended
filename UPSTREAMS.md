@@ -16,7 +16,7 @@ dictionaries). "Inferred" marks what was read in code but not run.
 | moonraker-obico | `4c0b7b6` | **removed** (not used) | removal steps below |
 | moonraker-timelapse | `c7fff11` | `c7fff11` (upstream `main` hasn't moved) | none |
 | Moonraker | `4e00a07` (v0.9.3-1) | `b559b9a81161f958a43c2f527b6ad96f73310d5d` (v0.11.0+4) | **pinned** (step 3) |
-| KlipperScreen | `7127b5d6` (v0.4.5-3) | `26d262522b9bd9fe7d67f67d3c6f90aa156d1b07` (≈v0.4.8) | pip deps in install.sh |
+| KlipperScreen | `7127b5d6` (v0.4.5-3) | `a12e8dde55d79774f9dfc5c59a61854f3f5c0184` (master, 2026-11-15) | **pinned** (step 4) |
 | Klipper | `faa89be` (2024-10-28) + patches | master (`29d4ec2d6` at research time) | patch rebase, probe rewrite, toolhead reflash |
 
 Targets are the newest commits at research time; recheck before each step and take newer ones if they
@@ -37,6 +37,13 @@ what the new requirements need, `pip check` clean, pip 20.3.4 took the `manylinu
 pycairo 1.28.0 imports against the printer's cairo 1.16. Moonraker `b559b9a` changes
 `system-dependencies.json`, so step 3 has to review it and add it to `release/sysdeps-checked`.
 apt (crowsnest v5) is left for step 6. App removal was done for obico alone (step 2).
+
+`.deb`s done (2026-11-17, step 4), not yet released: `release/debs.conf` lists Debian's own packages by
+version, sha256 and archive.debian.org URL; make-release downloads and checks them into `debs/`. install.sh
+adds only missing ones, before any change refuses them unless `apt-get -s` would install exactly those (it
+checks dependencies; `dpkg --dry-run -i` doesn't: it passed a backports build whose libnm0 the printer
+lacks), and purges them on rollback. Upgrading an already installed package is refused for now (the rollback
+would need its old `.deb`); step 6 (crowsnest v5) needs that.
 
 - **Fix the regex.** It refuses harmless files (Moonraker `docs/doc-requirements.txt`,
   `docs/pymdown-extras/setup.py`) and misses real ones (crowsnest `tools/libs/pkglist-*.sh`).
@@ -137,17 +144,48 @@ for a LAN address forwarded by 127.0.0.1 and 401 for an outside one. System pack
 Test before pinning: install the wheels into a copy of `~/moonraker-env` on the printer and start
 Moonraker from it on another port.
 
-## Step 4: KlipperScreen → `26d2625`
+## Step 4: KlipperScreen → `a12e8dd`
+
+Pinned (2026-11-17), not yet released: master, not the planned `26d2625`, with its setup brought up to
+what its installer does now, so nothing runs on a fallback. Tested on the printer before pinning (each test
+reverted):
+
+- The wheels installed offline into a copy of `.KlipperScreen-env` (`pip check` clean; jinja2, pycairo
+  1.28.0, requests, sdbus 0.14.3 and websocket-client changed), and `a12e8dd` ran on the screen through the
+  service (its new `KlipperScreen-start.sh`, X): 600x1024, connected, Klipper ready, main menu built.
+- **`gir1.2-nm-1.0`** (shipped, `release/debs.conf`): without it the network panel falls back to its sdbus
+  code. With the package's typelib, KlipperScreen's libnm client listed `wlan0` and 10 networks against
+  the printer's libnm 1.30.6.
+- **Service file:** install.sh fills in upstream's `scripts/KlipperScreen.service` as its installer does.
+  New against Sovol's: `PAMName=%u` (a logind session on tty7, seen as `c1 sovol seat0 tty7`),
+  `CapabilityBoundingSet=~CAP_WAKE_ALARM` and `ExecStartPost=+chvt 7`. `chvt` is in `kbd`, which its installer
+  adds when there's a VT and Sovol's image lacks: without it the service fails to start (203/EXEC, seen),
+  so `kbd` 2.3.0-3 is shipped too. X still runs on VT 2 on this printer (it did before as well) and starts
+  after `chvt 7`, so the screen ends on X. Run as a release installs it (`a12e8dd`, its venv, both `.deb`s,
+  the new unit): three restarts each left one xinit/Xorg/KlipperScreen and a stop left none, the network
+  panel imports libnm. After a manual stop the unit reads `failed` (xinit exits non-zero; from upstream's
+  `exec xinit`). **Under `PAMName`, X and KlipperScreen live in the login session's scope**, outside the
+  service: systemd stops them only through the main PID, which works because `a12e8dd`'s start script
+  `exec`s xinit. Sovol's older script doesn't, and with it a restart left the old X holding `:0` (seen in
+  testing). install.sh's rollback restores the old unit with the old tree, but installing an older
+  release later keeps the new unit with the old script; put the old unit back first (see CHANGELOG). PolicyKit: the printer's polkit is 0.105, for which upstream
+  still writes the `.pkla` the printer has; the `network` group it adds is only used by newer polkit rules.
+- **Moonraker:** install.sh rewrites `moonraker.env` as Moonraker's installer does now (`-m moonraker`,
+  `PYTHONPATH`, `MOONRAKER_DATA_PATH`); Sovol's started `moonraker/moonraker.py`, upstream's "legacy entry
+  point". Sovol's Moonraker (`4e00a07`) runs that way too (tested on port 7126), so a rollback works. Its
+  unit is upstream's SV1 (Moonraker validates it as current); its PolicyKit script is unchanged since stock.
+
+The Network panel wasn't opened on the screen; check it after installing.
 
 - 414 commits: lockscreen, fine-tune panel, Spoolman edits, keyboard navigation, settings in categories,
   optional Unix-socket connection, Wayland support. KlippyRest is gone (all websocket RPC); Spoolman
   options reworked; the macro shortcut now defaults off.
 - **Python:** still ≥3.8. **Deps:** jinja2 3.1.6, requests 2.32.5, pycairo 1.28.0 (sdist),
   psutil <7.2.0, websocket-client 1.9.0, sdbus ≥0.14.3, PyGObject <3.51 (3.50.0 installed already).
-- Master after `26d2625` (a451d9d9, 2026-11-15) adds the apt package `gir1.2-nm-1.0` (libnm networking,
-  with an sdbus fallback). That's why the target stops before it.
-- The installed systemd unit isn't regenerated by a pin change, so the new unit template doesn't apply.
-  `KlipperScreen-start.sh` still runs `xinit` for X.
+- `a451d9d` adds the apt package `gir1.2-nm-1.0` (libnm networking): shipped (above), and the pin is listed
+  in `release/sysdeps-checked`. Later commits are fixes (Wi-Fi device re-resolve, popups, settings
+  combobox, `Gtk.Label(label=...)`).
+- `KlipperScreen-start.sh` still runs `xinit` for X.
 - **Rotation stays ours.** Upstream: "Rotation is handled by the OS and not by KlipperScreen". The
   orientation setting in `release/zero-config/settings.py` stays. The `Screen resolution: WxH` log line
   it waits for is still at `screen.py:147`.
