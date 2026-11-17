@@ -2,7 +2,7 @@
 
 Each `## vX.Y.Z` section becomes that release's notes.
 
-## Unreleased
+## v0.4.0
 
 - Config page: a setting change or an install is refused while a calibration or an install runs (each restarts
   Klipper, which used to cut the other short). The belt check deletes the previous run's result files first,
