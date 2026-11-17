@@ -113,7 +113,8 @@ while read -r pkg ver _ url; do
 done < <(grep -v '^\s*#' debs.conf | grep .)
 if [ -n "$debs" ]; then   # dpkg --dry-run doesn't check dependencies; apt's simulation does, and must add nothing else
     sim=$(apt-get -s -o Debug::NoLocking=1 install --no-install-recommends "${debfiles[@]/#/$PWD/}" 2>&1) || true
-    if [ "$(awk '$1 == "Inst" || $1 == "Remv" {print $1, $2}' <<<"$sim" | sort)" != "$(printf 'Inst %s\n' $debs | sort)" ]; then
+    planned=$(awk '$1 == "Inst" || $1 == "Remv" {print $1, $2}' <<<"$sim" | sort)
+    if [ "$planned" != "$(printf 'Inst %s\n' $debs | sort)" ]; then
         echo "can't install$debs from the release alone:"; grep -E '^(Inst|Remv|E:)' <<<"$sim" || true; exit 1
     fi
 fi
@@ -175,7 +176,7 @@ restore_host() {   # rsync -c: a release file can match the backup's size and mt
     wait_ready || true
 }
 stashed=""   # apps whose local changes this run stashed: the only stashes restore_host may pop
-debs_added=""   # packages this run installed: the only ones restore_host removes
+debs_added=""   # packages this run installed: the only ones restore_host purges
 # from here on, anything failing unexpectedly puts klippy/ and the apps back before install.sh exits
 trap 'log "unexpected failure, rolling back"; restore_host' ERR
 
@@ -226,15 +227,15 @@ done
 
 # services, set up the way upstream's installers set them up now (a pin change alone doesn't touch them)
 menv=$HOME/printer_data/systemd/moonraker.env   # Sovol's runs moonraker/moonraker.py, the legacy entry point
-want=$(printf 'MOONRAKER_DATA_PATH="%s"\nMOONRAKER_ARGS="-m moonraker"\nPYTHONPATH="%s"' "$HOME/printer_data" "$HOME/moonraker")
-if [ -d "$HOME/moonraker" ] && [ -f "$menv" ] && [ "$want" != "$(cat "$menv")" ]; then
-    replace "$menv" "$want"; restart_add moonraker; log "moonraker: started as upstream does now (-m moonraker)"
+menv_text=$(printf 'MOONRAKER_DATA_PATH="%s"\nMOONRAKER_ARGS="-m moonraker"\nPYTHONPATH="%s"' "$HOME/printer_data" "$HOME/moonraker")
+if [ -d "$HOME/moonraker" ] && [ -f "$menv" ] && [ "$menv_text" != "$(cat "$menv")" ]; then
+    replace "$menv" "$menv_text"; restart_add moonraker; log "moonraker: started as upstream does now (-m moonraker)"
 fi
 ksunit=$ROOT/etc/systemd/system/KlipperScreen.service; kstpl=$HOME/KlipperScreen/scripts/KlipperScreen.service
 if [ -f "$ksunit" ] && [ -f "$kstpl" ]; then   # upstream's template, filled in as its installer does (X: Sovol's backend)
-    want=$(sed "s|KS_USER|$(id -un)|g; s|KS_ENV|$HOME/.KlipperScreen-env|g; s|KS_DIR|$HOME/KlipperScreen|g; s|KS_BACKEND|X|g" "$kstpl")
-    if [ "$want" != "$(cat "$ksunit")" ]; then
-        replace "$ksunit" "$want"; sudo -n systemctl daemon-reload; restart_add KlipperScreen
+    ksunit_text=$(sed "s|KS_USER|$(id -un)|g; s|KS_ENV|$HOME/.KlipperScreen-env|g; s|KS_DIR|$HOME/KlipperScreen|g; s|KS_BACKEND|X|g" "$kstpl")
+    if [ "$ksunit_text" != "$(cat "$ksunit")" ]; then
+        replace "$ksunit" "$ksunit_text"; sudo -n systemctl daemon-reload; restart_add KlipperScreen
         log "KlipperScreen: service file updated from upstream's template"
     fi
 fi

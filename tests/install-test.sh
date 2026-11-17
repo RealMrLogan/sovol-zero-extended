@@ -139,12 +139,12 @@ has "$t/dpkg/fakepkg" 1.0
 has "$H/printer_data/systemd/moonraker.env" 'MOONRAKER_ARGS="-m moonraker"'
 has "$H/printer_data/systemd/moonraker.env" "PYTHONPATH=\"$H/moonraker\""
 has "$H/printer_data/systemd/moonraker.env" "MOONRAKER_DATA_PATH=\"$H/printer_data\""
-U=$R/etc/systemd/system/KlipperScreen.service
-has "$U" "User=$(id -un)"
-has "$U" "KS_XCLIENT=$H/.KlipperScreen-env/bin/python $H/KlipperScreen/screen.py\" BACKEND=X"
-has "$U" "PAMName=%u"
+KSUNIT=$R/etc/systemd/system/KlipperScreen.service
+has "$KSUNIT" "User=$(id -un)"
+has "$KSUNIT" "KS_XCLIENT=$H/.KlipperScreen-env/bin/python $H/KlipperScreen/screen.py\" BACKEND=X"
+has "$KSUNIT" "PAMName=%u"
 has "$t/systemctl.log" "restart KlipperScreen"
-cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$H"/zero-extended/backup/*/files"$U" ||
+cmp -s "$t/origroot/etc/systemd/system/KlipperScreen.service" "$H"/zero-extended/backup/*/files"$KSUNIT" ||
     fail "old KlipperScreen unit not backed up under its own path"
 
 echo "== re-install changes nothing"
