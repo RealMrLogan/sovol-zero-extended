@@ -118,11 +118,7 @@ function renderSetting(key, s) {
       setEnabled(false);
       msg.className = "msg"; msg.textContent = s.applying;
       try {
-        const r = await fetch("api/settings/" + key, { method: "POST", headers: { "Content-Type": "application/json" },
-                                                       body: JSON.stringify({ value }) });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || r.statusText);
-        s.value = d.value;
+        s.value = (await post("api/settings/" + key, JSON.stringify({ value }))).value;
         buttons().forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.value === s.value)));
         msg.className = "msg ok"; msg.textContent = "Applied.";
       } catch (e) { msg.className = "msg err"; msg.textContent = "Failed: " + e.message; }
@@ -135,7 +131,15 @@ function renderSetting(key, s) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const setUpdateMsg = (s, cls) => { const m = $("#update-msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
+const msgSetter = (sel) => (s, cls) => { const m = $(sel); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
+const setUpdateMsg = msgSetter("#update-msg"), setCalMsg = msgSetter("#cal-msg");
+
+async function post(path, body, type = "application/json") {   // the reply's JSON; throws the server's error
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": type }, body });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || r.statusText);
+  return d;
+}
 
 function load() {   // status and settings; again after an install, which can change both
   return fetch("api/settings").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); })
@@ -221,7 +225,6 @@ function renderCalibration(d) {
   return running;
 }
 
-const setCalMsg = (s, cls) => { const m = $("#cal-msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = s; };
 let calPolling = false;
 async function loadCalibration() {   // polls while a calibration runs
   if (calPolling) return; calPolling = true;
@@ -240,9 +243,7 @@ document.querySelectorAll("[data-job]").forEach((b) => (b.onclick = async () => 
   const job = b.dataset.job, input = $("#t-" + job);
   const body = input ? JSON.stringify({ target: Number(input.value) }) : undefined;
   try {
-    const r = await fetch("api/calibration/" + job, { method: "POST", headers: { "Content-Type": "application/json" }, body });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.statusText);
+    await post("api/calibration/" + job, body);
     loadCalibration();
   } catch (e) { setCalMsg("Could not start: " + e.message, "err"); }
 }));
@@ -253,19 +254,14 @@ $("#file").onchange = async () => {
   if (!f) return;
   $("#pick").disabled = true; $("#install").hidden = true; setUpdateMsg("Uploading " + f.name + "…");
   try {
-    const r = await fetch("api/update/upload", { method: "POST", headers: { "Content-Type": "application/zip" }, body: f });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.statusText);
-    showPending(d);
+    showPending(await post("api/update/upload", f, "application/zip"));
   } catch (e) { setUpdateMsg("Upload failed: " + e.message, "err"); }
   $("#pick").disabled = false;
 };
 $("#install").onclick = async () => {
   $("#install").disabled = true;
   try {
-    const r = await fetch("api/update/install", { method: "POST" });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.statusText);
+    await post("api/update/install");
     follow();
   } catch (e) { setUpdateMsg("Could not start the install: " + e.message, "err"); }
   $("#install").disabled = false;

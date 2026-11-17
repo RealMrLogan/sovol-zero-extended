@@ -17,7 +17,7 @@
 ## Klipper delta
 - Sovol tree = upstream faa89be8 (2024-10-28) + "first commit for sv08mini" + 48 commits + 13 uncommitted files.
 - ~4,100 changed lines in 105 files (98 "modified" files on the printer were only stale .pyc caches).
-- Now kept as patches/ (8 feature patches on upstream faa89be8). Applied, they reproduce the printer's tree exactly,
+- Now kept as patches/ (8 feature patches on upstream faa89be8; 0005, the unused pressure probe, was dropped 2026-11-16). Applied, they reproduce the printer's tree exactly,
   minus noise that was dropped: 47 lost exec bits, a compiled c_helper.so, stale .config files, .gitignore/README edits.
 - Notable: chipid.c pins fixed CAN UUIDs (printer.cfg relies on them); sched.c disables the "Timer too close" shutdown;
   virtual_sdcard.py hardcodes /home/sovol paths.

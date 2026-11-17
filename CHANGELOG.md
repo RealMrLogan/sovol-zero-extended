@@ -4,6 +4,10 @@ Each `## vX.Y.Z` section becomes that release's notes.
 
 ## Unreleased
 
+- Config page: if power was lost just as an install started, the Update section failed to load until the
+  next install. It now shows the whole install log instead.
+- Code cleanup, no behaviour change: the config page's JavaScript posts through one helper, the resonance
+  test's 133 Hz top is one constant, and a few names say what they hold. Docs brought up to date.
 - install.sh: the one-way removals of Sovol's leftovers (its updaters, Obico) moved to `sovol-cleanup.sh`,
   called at the same points, so install.sh stays the install flow. Patch 0010 also drops the "Install Obico"
   name from the stock menu's code.

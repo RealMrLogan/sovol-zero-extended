@@ -14,6 +14,7 @@ AUTOSAVE_HEADER = "#*# <---------------------- SAVE_CONFIG ---------------------
 REDUCED_CURRENTS = {"quiet": ("Quiet", 2.5), "low": ("Low", 1.5)}   # A, X and Y (Sovol: 3.5 A on the TMC5160s)
 FALLBACK_ACCEL = 10000   # "auto" before input shaping has been measured
 PRINTER_CFG = os.path.join(CONFIG, "printer.cfg")
+RESONANCE_MAX_FREQ = 133   # Hz: the top of the resonance test (Klipper's default)
 FIXED_CAPS = {"15k": 15000, "10k": 10000}   # keys aren't numbers: the page's JavaScript sorts those first
 DEFAULTS = {"motor_current": "stock", "max_accel": "stock", "auto_accel": None}
 
@@ -23,13 +24,13 @@ BASE = """\
 # Sovol tests 35-45 Hz only, and SHAPER_CALIBRATE can't recommend a frequency it didn't test
 [resonance_tester]
 min_freq: 5
-max_freq: 133
+max_freq: %d
 
 # Sovol: 0.001, an undamped frame; 0.1 is Klipper's default and closer to a real one
 [input_shaper]
 damping_ratio_x: 0.1
 damping_ratio_y: 0.1
-"""
+""" % RESONANCE_MAX_FREQ
 
 # Klipper takes any acceleration a file asks for; these cap it. The resonance test sets its own
 # acceleration directly, not through these commands, so calibration isn't capped.
@@ -147,7 +148,7 @@ if __name__ == "__main__":
         sys.exit()
 
     # self-check: python3 tuning.py
-    import re, tempfile
+    import tempfile
     t = dict(DEFAULTS)
     assert "tmc5160" not in render(t) and "max_accel" not in render(t)
     t.update(motor_current="quiet", max_accel="auto", auto_accel=8300)

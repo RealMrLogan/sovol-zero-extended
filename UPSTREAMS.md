@@ -1,7 +1,8 @@
 # Upstream update plan
 
 Goal: every upstream on its current version, with everything the printer does today still working.
-Nothing here is done yet. Researched 2026-11-15 (read-only: scratch clones, PyPI metadata, the printer
+Status (2026-11-16): steps 1 and 2 are released (v0.3.0), step 0's pip half is on `main`; each step says
+where it stands. Researched 2026-11-15 (read-only: scratch clones, PyPI metadata, the printer
 over SSH, and Klipper master run in batch mode against the printer's config and the stock images' data
 dictionaries). "Inferred" marks what was read in code but not run.
 
@@ -23,8 +24,9 @@ don't add new requirements.
 
 ## Step 0: install.sh has to manage dependencies
 
-Today install.sh refuses any app pin whose diff touches a dependency file (`DEPS` regex) and installs no
-packages itself. Moonraker, KlipperScreen and crowsnest v5 all change dependencies, so this comes first.
+Before this step, install.sh refused any app pin whose diff touched a dependency file (a `DEPS` regex) and
+installed no packages itself. Moonraker, KlipperScreen and crowsnest v5 all change dependencies, so this
+comes first.
 
 pip done (2026-11-16), not yet released: `apps.conf` pip column, offline install from `apps/wheels` with venv
 backup and rollback (`tests/install-test.sh`), `tools/build-wheels.sh` + a CI job (QEMU, untested in CI),
@@ -81,8 +83,8 @@ Test: pages load, jog leaves the mode unchanged, webcam streams after a reboot.
 
 ## Step 2: remove moonraker-obico
 
-In progress (2026-11-16): done in install.sh (after a successful install), `apps.conf` and patch 0010;
-covered by `tests/install-test.sh`. Not yet installed on the printer. The commented
+Done (2026-11-16, v0.3.0, installed and checked on the printer): `release/sovol-cleanup.sh` (after a
+successful install), `apps.conf` and patch 0010; covered by `tests/install-test.sh`. The commented
 `#[include moonraker-obico-update.cfg]` in `moonraker.conf` stays (a comment; moonraker.conf is untouched).
 
 Not used (never linked: no `auth_token`). Everything that refers to it:

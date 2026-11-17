@@ -63,14 +63,14 @@ runout_gcode:
   pin and master, so this can go in before or after UPSTREAMS.md step 5 and survive it.
 - **Config page toggle** (`release/zero-config/settings.py`): a "Filament motion sensor: off / on" setting,
   following the existing orientation setting.
-  - On: write the motion-sensor section to a file the release owns (e.g.
-    `~/printer_data/config/zero-extended/filament-motion.cfg`), make sure `printer.cfg` includes it, and
-    `FIRMWARE_RESTART`. Off: empty the file and restart.
+  - On: write the motion-sensor section to a file in `~/printer_data/config/zero-extended/` (e.g.
+    `filament-motion.cfg`), which `printer.cfg`'s existing `[include zero-extended/*.cfg]` already picks
+    up, and `FIRMWARE_RESTART`. Off: empty the file and restart. (`tuning.py` writes `zero-extended.cfg` there
+    the same way.)
   - Refuse while printing, as install.sh does.
   - Optional second setting: detection length (5 / 6 / 8 mm), since a config value can't be set at runtime.
   - Defaults to off: with nothing wired to PE7 the pin floats and the sensor would pause prints at random.
-- Leave `printer.cfg` otherwise alone. The release already avoids rewriting user config. Only the
-  include line is added, the same way install.sh edits `get_ip.cfg`.
+- Leave `printer.cfg` alone: the include is already there, so this needs no edit to user config.
 - Messages go to `M117`, so they show on the stock screen, Mainsail and KlipperScreen.
 
 ## Test plan

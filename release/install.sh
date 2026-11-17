@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
 done
 
 log() { echo "==> $(date +%T) $*"; }
-mf() { python3 -c "import json; d=json.load(open('manifest.json')); print($1)"; }
+manifest() { python3 -c "import json; d=json.load(open('manifest.json')); print($1)"; }
 moon() { curl -sf "http://localhost:7125/$1"; }
 klipper_state() { moon printer/info | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["state"])' 2>/dev/null || echo down; }
 wait_ready() {   # a host restart can't clear an MCU shutdown (e.g. a startup race in klippy), so try one FIRMWARE_RESTART
@@ -46,7 +46,7 @@ running_version() {   # board -> mcu_version reported by the running firmware
         python3 -c "import json,sys; print(json.load(sys.stdin)['result']['status']['$obj']['mcu_version'])" 2>/dev/null || true
 }
 
-version=$(mf 'd["version"]')
+version=$(manifest 'd["version"]')
 log "installing sovol-zero-extended $version ($(date +%F))"
 
 log "verifying files"
@@ -60,7 +60,7 @@ case $state in printing|paused) echo "printer is $state: refusing to install"; e
 # decide which boards need flashing while Klipper can still tell us what they run
 flash=""; declare -A was
 for b in toolhead mainboard; do
-    want=$(mf "d['boards']['$b']['version']"); have=$(running_version $b); was[$b]=$have
+    want=$(manifest "d['boards']['$b']['version']"); have=$(running_version $b); was[$b]=$have
     if [[ $force == *" $b "* ]]; then flash+=" $b"; log "$b: flash forced (running: ${have:-unknown})"
     elif [ "$noflash" = 1 ]; then log "$b: skipped (--no-flash)"
     elif [ -z "$have" ]; then log "$b: running version unknown (Klipper not ready), not flashing; use --force-flash $b"
@@ -281,12 +281,12 @@ if [ -n "$flash" ]; then
     # toolhead first and verified before the mainboard, which is also the toolhead's only link to the host
     for b in toolhead mainboard; do
         [[ " $flash " == *" $b "* ]] || continue
-        want=$(mf "d['boards']['$b']['version']")
+        want=$(manifest "d['boards']['$b']['version']")
         # the previous image, copied: $STATE/firmware/$b.bin is overwritten once this board succeeds
         if [ -f "$STATE/firmware/$b.bin" ] && [ "$(cat "$STATE/firmware/$b.version")" = "${was[$b]}" ]; then
             cp "$STATE/firmware/$b.bin" "$backup/firmware/$b.bin"; old_ver[$b]=${was[$b]}
         else
-            cp "$(mf "d['boards']['$b']['stock_file']")" "$backup/firmware/$b.bin"; old_ver[$b]=$(mf "d['boards']['$b']['stock_version']")
+            cp "$(manifest "d['boards']['$b']['stock_file']")" "$backup/firmware/$b.bin"; old_ver[$b]=$(manifest "d['boards']['$b']['stock_version']")
         fi
         old_img[$b]=$backup/firmware/$b.bin
         flashed="$b $flashed"   # before flashing: a failed flash can leave the board anywhere

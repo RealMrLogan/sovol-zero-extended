@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import calibration
 from settings import SETTINGS, choices
-from updates import MAX_UPLOAD, install_args, save_upload, start_install, status, update_status
+from updates import MAX_UPLOAD, install_args, installed_release, save_upload, start_install, update_status
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.expanduser("~/printer_data/logs/zero-config.log")   # next to Klipper's, so Mainsail lists it
@@ -35,7 +35,7 @@ class Handler(BaseHTTPRequestHandler):
                     value, error = None, str(e)
                 out[key] = {"label": s["label"], "help": s["help"], "choices": choices(s),
                             "applying": s["applying"], "value": value, "error": error}
-            self.send(200, {"status": status(), "settings": out})
+            self.send(200, {"status": installed_release(), "settings": out})
         elif self.path == "/api/update":
             self.send(200, update_status())
         elif self.path == "/api/calibration":

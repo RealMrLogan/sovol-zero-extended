@@ -68,7 +68,7 @@ def parse_shaper(lines):
     return out
 
 
-def run_shaper(_):
+def run_shaper():
     _clean_start()
     _home()
     start = time.time()
@@ -91,7 +91,7 @@ def run_shaper(_):
 def read_psd(path):
     with open(path) as f:
         rows = [(float(r["freq"]), float(r["psd_xyz"])) for r in csv.DictReader(f)]
-    return [(fr, p) for fr, p in rows if 10 <= fr <= 133]
+    return [(fr, p) for fr, p in rows if 10 <= fr <= tuning.RESONANCE_MAX_FREQ]
 
 
 def peak_indexes(values, floor=0.15):
@@ -128,7 +128,7 @@ def compare_belts(a, b):
             "freq": freqs, "a": [round(p, 3) for p in na], "b": [round(p, 3) for p in nb]}
 
 
-def run_belts(_):
+def run_belts():
     _home()
     for belt, axis in (("a", "1,1"), ("b", "1,-1")):
         moonraker.gcode("TEST_RESONANCES AXIS=%s NAME=zx_belt_%s" % (axis, belt))
@@ -191,7 +191,7 @@ def start(name, target=None):
 
 def _run(name, fn, heater, target):
     try:
-        result = run_pid(heater, target) if heater else fn(None)
+        result = run_pid(heater, target) if heater else fn()
         _save_result(name, result)
         log.info("calibration %s: done, %s", name, {k: v for k, v in result.items() if not isinstance(v, list)})
     except Exception as e:   # shown on the page; the thread must always clear "running"
@@ -204,17 +204,17 @@ def _run(name, fn, heater, target):
 def checks():
     """Problems worth fixing, as (level, text): what Sovol's defaults leave behind."""
     try:
-        s = moonraker.query("configfile=settings")["configfile"]["settings"]
+        config = moonraker.query("configfile=settings")["configfile"]["settings"]
     except RuntimeError as e:
         return [("err", "Can't read Klipper's settings: %s" % e)]
     out = []
-    shaper = s.get("input_shaper", {})
+    shaper = config.get("input_shaper", {})
     if not shaper.get("shaper_freq_x") or not shaper.get("shaper_freq_y"):
         out.append(("err", "Input shaping is off: printing at high acceleration rings and is loud. Run Input shaping."))
-    if s.get("resonance_tester", {}).get("max_freq", 133) < 100:
+    if config.get("resonance_tester", {}).get("max_freq", tuning.RESONANCE_MAX_FREQ) < 100:
         out.append(("warn", "The resonance test is limited to %g Hz; reinstall this release to fix it."
-                    % s["resonance_tester"]["max_freq"]))
-    if s.get("heater_bed", {}).get("pid_kp") == SOVOL_BED_KP:
+                    % config["resonance_tester"]["max_freq"]))
+    if config.get("heater_bed", {}).get("pid_kp") == SOVOL_BED_KP:
         out.append(("warn", "The bed heater still uses Sovol's factory tuning. Run Bed heater."))
     if not out:
         out.append(("ok", "No problems found."))
@@ -224,10 +224,10 @@ def checks():
 def status():
     job = dict(_job, label=JOBS[_job["name"]][0] if _job["name"] else None)
     try:
-        log = moonraker.responses_since(_job["start"])[-12:] if _job["running"] else []
+        console = moonraker.responses_since(_job["start"])[-12:] if _job["running"] else []
     except RuntimeError:   # Klipper restarting mid-job
-        log = []
-    return {"job": job, "log": log, "results": load_results(), "checks": checks()}
+        console = []
+    return {"job": job, "log": console, "results": load_results(), "checks": checks()}
 
 
 if __name__ == "__main__":   # self-check: python3 calibration.py
@@ -317,7 +317,7 @@ if __name__ == "__main__":   # self-check: python3 calibration.py
                       "Calculating the best input shaper parameters for y axis",
                       "To avoid too much smoothing with 'mzv', suggested max_accel <= 8345 mm/sec^2",
                       "Recommended shaper_type_y = mzv, shaper_freq_y = 53.0 Hz"]).install()
-    run_shaper(None)
+    run_shaper()
     assert m.sent == ["G28", "SHAPER_CALIBRATE", "SAVE_CONFIG"], m.sent
     assert tuning.load()["auto_accel"] == 8300
     # start(): the target is checked before anything heats, one job at a time, never during a print

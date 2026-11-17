@@ -47,6 +47,13 @@ def read_json(path):
         return json.load(f)
 
 
+def log_start():
+    """Where the last install's part of install.log begins. An empty file (power lost as it was written)
+    shows the whole log rather than failing every status request until the next install."""
+    with open(LOG_START) as f:
+        return int(f.read().strip() or 0)
+
+
 FINISHED = re.compile(r"^==> (\d\d:\d\d:\d\d )?installed sovol-zero-extended ", re.M)   # untimed: v0.3.0 and older
 
 
@@ -54,10 +61,8 @@ def update_status():
     running, result = install_state()
     log = ""
     if os.path.exists(LOG_START) and os.path.exists(INSTALL_LOG):
-        with open(LOG_START) as f:
-            start = int(f.read())
         with open(INSTALL_LOG, "rb") as f:
-            f.seek(start)
+            f.seek(log_start())
             log = f.read().decode(errors="replace")
     pending = read_json(PENDING) if os.path.exists(PENDING) else None
     # A finished transient unit is unloaded, so its Result is "" after a success but also after it was
@@ -127,7 +132,7 @@ def start_install(args):
     os.remove(PENDING)
 
 
-def status():
+def installed_release():
     try:
         manifest = read_json(os.path.join(STATE, "manifest.json"))
     except OSError:
@@ -140,6 +145,11 @@ if __name__ == "__main__":   # self-check of the trust-boundary parsers: python3
     import tempfile
     tmp = tempfile.TemporaryDirectory()
     assert install_args([]) == []
+    LOG_START = os.path.join(tmp.name, "logstart")
+    for written, start in (("1234", 1234), ("", 0)):
+        with open(LOG_START, "w") as f:
+            f.write(written)
+        assert log_start() == start, (written, log_start())
     assert FINISHED.search("x\n==> 03:16:22 installed sovol-zero-extended v1\n")
     assert FINISHED.search("==> installed sovol-zero-extended v1\n")
     assert not FINISHED.search("==> 03:16:22 installing sovol-zero-extended v1 (2026-11-17)\n")
