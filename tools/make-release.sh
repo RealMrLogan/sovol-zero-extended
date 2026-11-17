@@ -12,20 +12,26 @@ dist=$ROOT/dist; stage=$dist/$name
 rm -rf "$stage" "$dist/$name.zip"; mkdir -p "$stage/firmware" "$stage/klipper"
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 
+# apply patches inside a repo, as tools/setup.sh does (verified to reproduce the printer's tree)
+patched_tree() {   # <dir> <commit> <patch dir>: upstream at <commit> + <patch dir>/*.patch
+    git -C "$ROOT/klipper" cat-file -e "$2^{commit}" 2>/dev/null || git -C "$ROOT/klipper" fetch -q --depth 1 origin "$2"
+    git -C "$ROOT/klipper" archive --prefix="$(basename "$1")/" "$2" | tar -x -C "$(dirname "$1")"
+    git -C "$1" init -q
+    git -C "$1" -c core.autocrlf=false apply --whitespace=nowarn "$3"/*.patch
+}
 tree=${TREE:-}
 if [ -z "$tree" ]; then
     echo "== patched tree: klipper@$(git -C "$ROOT/klipper" rev-parse --short HEAD) + patches/"
-    tree=$work/klipper
-    git -C "$ROOT/klipper" archive --prefix=klipper/ HEAD | tar -x -C "$work"
-    git -C "$tree" init -q   # apply inside a repo, as tools/setup.sh does (verified to reproduce the printer's tree)
-    git -C "$tree" -c core.autocrlf=false apply --whitespace=nowarn "$ROOT"/patches/*.patch
+    tree=$work/klipper; patched_tree "$tree" HEAD "$ROOT/patches"
 fi
 
 stock_version() { awk -v b="$1" '$1==b {print $2}' "$ROOT/stock-firmware/VERSIONS"; }
 
-# the patches must still reproduce Sovol's shipped toolhead image byte for byte
-echo "== reproducibility check: toolhead vs stock"
-"$ROOT/tools/build-firmware.sh" "$tree" toolhead "$work/repro" "$(stock_version toolhead)" >/dev/null
+# Sovol's tree (its upstream pin + patches-stock/) must still reproduce their shipped toolhead image byte for
+# byte: the check that patches-stock/ is exactly what Sovol changed
+echo "== reproducibility check: patches-stock/ toolhead vs stock"
+patched_tree "$work/stock" "$(cat "$ROOT/patches-stock/PIN")" "$ROOT/patches-stock"
+"$ROOT/tools/build-firmware.sh" "$work/stock" toolhead "$work/repro" "$(stock_version toolhead)" >/dev/null
 cmp "$work/repro/toolhead.bin" "$ROOT/stock-firmware/stock-toolhead.bin"
 echo "identical"
 

@@ -8,9 +8,8 @@ require_idle
 synced=$(rsync -rlptc --delete -i --exclude='*.pyc' --exclude=__pycache__ --exclude='*.so' --exclude=.version \
     "$WORK/klippy/" "$PRINTER:klipper/klippy/")   # captured, so a failed rsync stops here
 grep -E '^<f|deleting' <<<"$synced" || echo "(no content changes)"
-# Sovol disabled klippy's c_helper.so rebuild (patch 0008), so chelper C edits don't take effect
-if grep -qE '^<f.* chelper/.*\.[ch]$' <<<"$synced"; then
-    echo "warning: chelper C changed, but c_helper.so is not rebuilt; the old one stays in use"
+if grep -qE '^(<f|\*deleting).* chelper/.*\.[ch]$' <<<"$synced"; then   # Klipper rebuilds it on start
+    rsh rm -f klipper/klippy/chelper/c_helper.so
 fi
 rsh sudo -n systemctl restart klipper
 wait_ready

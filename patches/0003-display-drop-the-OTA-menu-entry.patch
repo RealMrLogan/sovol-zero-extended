@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Logan Saunders <32494494+RealMrLogan@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 17:42:00 -0700
+Subject: [PATCH] display: drop the OTA menu entry
+
+Sovol's OTA would install its own package over sovol-zero-extended;
+releases are installed from the /extended/ page instead.
+---
+ klippy/extras/display/menu.cfg | 10 ----------
+ 1 file changed, 10 deletions(-)
+
+diff --git a/klippy/extras/display/menu.cfg b/klippy/extras/display/menu.cfg
+index 926364bc5..9bcf0f730 100755
+--- a/klippy/extras/display/menu.cfg
++++ b/klippy/extras/display/menu.cfg
+@@ -667,16 +667,6 @@ gcode:
+     PID_CALIBRATE HEATER=heater_bed TARGET=60 WRITE_FILE=1
+     SAVE_CONFIG
+ 
+-[menu __main __setup __ota]
+-type: list
+-name: OTA
+-
+-[menu __main __setup __ota __confirm]
+-type: command
+-name: Confirm
+-gcode:
+-    _OTA
+-
+ [menu __main __setup __obico_link]
+ type: list
+ name: {'Re-link' if printer["gcode_macro OBICO_LINK_STATUS"].is_linked else 'Link'} Obico

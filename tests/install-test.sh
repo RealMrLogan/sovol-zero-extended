@@ -20,6 +20,8 @@ setup() {
     mkdir -p "$H/klipper/klippy" "$CFG" "$H/printer_data/logs" "$H/patch/config" "$H/mainsail" \
              "$R/etc/nginx/sites-available" "$R/etc/systemd/system" "$R/boot/scripts" "$BIN"
     echo old > "$H/klipper/klippy/klippy.py"
+    mkdir -p "$H/klipper/klippy/chelper"; echo old > "$H/klipper/klippy/chelper/serialqueue.c"
+    echo built > "$H/klipper/klippy/chelper/c_helper.so"
     echo old > "$H/mainsail/index.html"
     echo '{"user": "keep"}' > "$H/mainsail/config.json"
     touch "$H/printer_data/logs/klippy.log"
@@ -45,6 +47,7 @@ setup() {
     cp -r "$REPO"/release/{install.sh,sovol-cleanup.sh,flash-board.sh,apps.conf,systemd,zero-config} "$REL/"
     find "$REL" -name __pycache__ -prune -exec rm -rf {} +
     echo new > "$REL/klipper/klippy/klippy.py"
+    mkdir -p "$REL/klipper/klippy/chelper"; echo new > "$REL/klipper/klippy/chelper/serialqueue.c"
     echo new > "$REL/apps/mainsail/index.html"
     echo '{"name": "sovol-zero-extended", "version": "v9.9.9", "boards": {
         "toolhead": {"version": "t", "stock_file": "firmware/stock-toolhead.bin", "stock_version": "t0"},
@@ -134,6 +137,7 @@ echo "== install"
 setup
 [ "$(install ready standby)" = 0 ] || { cat "$t/out"; fail "install failed"; }
 has "$H/klipper/klippy/klippy.py" new
+[ ! -e "$H/klipper/klippy/chelper/c_helper.so" ] || fail "c_helper.so kept after chelper C changed"
 has "$H/mainsail/index.html" new
 has "$H/mainsail/config.json" keep
 has "$H/zero-extended/version" v9.9.9
@@ -230,7 +234,7 @@ echo "== rollback when Klipper doesn't come back"
 setup
 [ "$(install error standby)" = 1 ] || { cat "$t/out"; fail "install succeeded with Klipper down"; }
 has "$t/out" "restoring the previous klippy/"
-same klipper/klippy/klippy.py; same mainsail/index.html
+same klipper/klippy/klippy.py; same klipper/klippy/chelper/c_helper.so; same mainsail/index.html
 same printer_data/config/printer.cfg; same patch/config/printer.cfg
 [ ! -e "$CFG/zero-extended" ] || fail "zero-extended.cfg left behind"
 [ ! -e "$H/zero-extended/version" ] || fail "version recorded for a failed install"

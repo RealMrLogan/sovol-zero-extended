@@ -18,7 +18,12 @@ check() {   # board, reset vector (hex), expected: ok or refused
 }
 check toolhead  08002101 ok
 check toolhead  08001fff refused   # inside Katapult
-check toolhead  08102001 refused   # past the app area
+check toolhead  08010001 refused   # past the toolhead's flash
+check toolhead  08020201 refused   # a mainboard image
 check mainboard 08020201 ok
 check mainboard 08002101 refused   # a toolhead image
+# an image too big for the app area (56 KiB on the toolhead)
+python3 -c 'import struct, sys; sys.stdout.buffer.write(struct.pack("<II", 0x20010000, 0x08002101) + bytes(57 * 1024))' > "$t/img.bin"
+out=$(PATH=$t/bin:$PATH HOME=$t "$REPO/release/flash-board.sh" toolhead "$t/img.bin" 2>&1 || true)
+[[ $out == REFUSING*"don't fit"* ]] || fail "oversized toolhead image accepted: $out"
 echo "flash-board-test ok"

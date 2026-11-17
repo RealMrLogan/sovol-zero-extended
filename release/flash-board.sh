@@ -6,16 +6,20 @@ board=${1:-}; bin=${2:-}
 FLASH="$HOME/klippy-env/bin/python $HOME/printer_data/build/flash_can.py"   # Sovol's Katapult flashtool; klippy-env has pyserial
 
 case $board in
-    toolhead)  start=0x08002000; uuid=61755fe321ac ;;   # 8 KiB Katapult, CAN
-    mainboard) start=0x08020000; uuid=0d1445047cdd ;;   # 128 KiB Katapult, USB-CAN bridge
+    toolhead)  start=0x08002000; end=0x08010000; uuid=61755fe321ac ;;   # 8 KiB Katapult, 64 KiB flash (configs/), CAN
+    mainboard) start=0x08020000; end=0x08120000; uuid=0d1445047cdd ;;   # 128 KiB Katapult, USB-CAN bridge
     *) echo "usage: $0 toolhead|mainboard image.bin"; exit 2 ;;
 esac
 [ -f "$bin" ] || { echo "no such image: $bin"; exit 1; }
 
-# a wrong start address makes the board unbootable: refuse images whose reset vector is outside the app area
+# a wrong start address makes the board unbootable: refuse images whose reset vector is outside the app area,
+# or that don't fit in it (a mainboard image's vector lies past the toolhead's flash)
 rv=$(od -An -tx4 -j4 -N4 "$bin" | tr -d ' \n')
-if (( 16#$rv < start || 16#$rv >= start + 0x100000 )); then
-    echo "REFUSING $bin: reset vector 0x$rv is not in the $board app area at $start"; exit 1
+if (( 16#$rv < start || 16#$rv >= end )); then
+    echo "REFUSING $bin: reset vector 0x$rv is not in the $board app area ($start-$end)"; exit 1
+fi
+if (( start + $(stat -c %s "$bin") > end )); then
+    echo "REFUSING $bin: $(stat -c %s "$bin") bytes don't fit in the $board app area ($start-$end)"; exit 1
 fi
 
 if systemctl is-active -q klipper; then echo "stop Klipper first"; exit 1; fi

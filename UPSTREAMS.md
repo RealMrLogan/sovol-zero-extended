@@ -196,22 +196,38 @@ The Network panel wasn't opened on the screen; check it after installing.
 
 ### Patches against master
 
-`git apply --3way` of each patch alone on master; conflicts are regions/lines.
+Ported on branch `klipper-master`, against master `29d4ec2d6` (2026-11-10). `patches-stock/` keeps Sovol's
+series on `faa89be8` (its `PIN`) for the byte-identical toolhead check; `patches/` is the master series. Each
+commit message says what was kept and dropped.
 
-| Patch | Upstream status | Conflicts | Plan |
-|---|---|---|---|
-| 0001 H750 128 KiB offset | fully upstream (`src/stm32/Kconfig:318`) | none (no-op) | **drop** |
-| 0002 fixed chip ids | not upstream | clean | keep (CAN uuids in printer.cfg depend on it) |
-| 0003 UC1701 fonts, menus, ws2811 | not upstream | i2ccmds.c 2/37, stm32/i2c.c 8/123 | keep screen parts; re-port the F1 i2c errata onto upstream's new i2c status codes |
-| 0004 eddy contact homing | superseded by upstream "tap" (5c23f9296, 0795fb014, `tap_z_offset` 6c8c8d24d, `PROBE_EDDY_CURRENT_TAP_CALIBRATE` ef7b13b1f) and `trigger_analog` | probe_eddy_current.py 10/669, sensor_ldc1612.c 5/204, ldc1612.py 5/87, probe.py 4/62, homing.py 2/17, bed_mesh.py 1/5 | **rewrite on upstream tap**; keep a thin `z_offset_calibration` wrapper only if the stock screen's calibration flow needs it |
-| 0005 pressure probe | unused by the printer | clean | dropped (2026-11-16) |
-| 0006 shutdown / tip codes | not upstream | idle_timeout 1/16, lis2dw 1/60 | keep, small rework |
-| 0007 scheduling / move queue | not upstream (`TRSYNC_TIMEOUT` still 0.025) | mcu.py 1/86 | keep move queue and `debug_shut`; re-decide the disabled "Timer too close" shutdown |
-| 0008 assorted host | toolhead timing hunk obsolete (constants moved to `extras/motion_queuing.py`) | configfile 2/233, toolhead 1/22, gcode_move 1/26, chelper 1/17, extruder 1/6, resonance_tester 1/7 | split: keep shell command, power-loss resume, paths; **drop** the chelper "don't rebuild" hunk (chelper changed 1,163 lines, so Sovol's prebuilt `c_helper.so` won't match), the toolhead hunk and the `-backup` hacks |
-| 0009 drop OTA menu entry | ours | clean after 0003 | keep |
+| Stock | Master | What happened |
+|---|---|---|
+| 0001 H750 128 KiB offset | - | dropped: upstream |
+| 0002 fixed chip ids | 0001 | clean |
+| 0003 UC1701, fonts, ws2811 | 0002 | Sovol's i2c changes dropped, not re-ported: on the F1 they made i2c errors non-fatal and reset the bus, reporting each as `ldc1612_i2c_report`; none was logged in any of the printer's klippy logs (prints, meshes, calibrations). An i2c error now shuts down, as upstream |
+| 0009, 0010 menu removals | 0003, 0004 | clean on 0002 |
+| 0006 shutdown / tip codes | 0005 | onto master's `idle_timeout` status and lis2dw/lis3dh id check |
+| 0007 scheduling / move queue | 0006 | **"Timer too close" shutdown restored** (Sovol pushed late timers back 50 ticks, hiding late steps); kept the 50 ms trsync timeout, 4096-entry move queue and the shutdown code for the stock screen; dropped never-incremented debug counters |
+| 0008 assorted host | 0007 | kept shell command, power-loss state, start-print events, tip codes, shaper result for the stock screen; dropped chelper no-rebuild, configfile hacks, toolhead constants, hidden files listing, `GET_GCODE_STATE`/`SOVOL_GET_STATE` (unused) |
+| 0004 eddy contact homing | 0008 | rewritten: `[z_offset_calibration]` keeps Sovol's commands on upstream "tap" (below); only the homing tip codes kept |
 
-Rebase order: 0002 → 0003 + 0009 (screen first, then the i2c re-port) → 0006 → 0007 → what's left of
-0008 → the 0004 rewrite. The obico menu removal (step 2) folds into 0003/0009.
+**`Z_OFFSET_CALIBRATION` and `RUN_PROBE_VIR_CONTACT` on tap** (`klippy/extras/z_offset_calibration.py`):
+Sovol's macros (`CLEAN_NOZZLE`, `START_PRINT`, `BED_MESH_CALIBRATE`) and the stock menu call them, so they
+keep their names and Sovol's config options (`vir_contact_speed` becomes the tap speed).
+`RUN_PROBE_VIR_CONTACT` taps from Z 5 and leaves the nozzle at the contact height, as Sovol's macros
+expect. `Z_OFFSET_CALIBRATION` heats (bed `BED_TEMP`, nozzle 130 °C), homes, taps at
+`endstop_xy_position` until two touches agree within 0.0125 mm, and sets the g-code Z offset to the contact
+height. Sovol instead recalibrated the eddy sensor from the contact point every print.
+Before either works: `PROBE_EDDY_CURRENT_TAP_CALIBRATE` (guess, refine, verify) and `SAVE_CONFIG`, which
+writes `tap_threshold`. The stock `stepper_z` already allows `position_min: -5`.
+
+Verified so far: both boards build with gcc 8.3.1 (toolhead 38.9 KB of 56 KB); the printer's full config
+loads in batch mode against the new dictionaries, `c_helper.so` rebuilt by master on the printer. Not yet run
+on hardware.
+
+**Downgrade:** an older release's install.sh refuses this one's chelper C (Sovol's tree can't rebuild
+`c_helper.so`). And once `tap_threshold` is saved, Sovol's Klipper rejects the option: remove it from
+`printer.cfg`'s SAVE_CONFIG block before going back.
 
 ### What else changed upstream that matters here
 

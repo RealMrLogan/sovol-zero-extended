@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Logan Saunders <32494494+RealMrLogan@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 09:42:00 -0700
+Subject: [PATCH] mcu: relax scheduling checks and grow the move queue
+
+On master: upstream's 'Timer too close' shutdown stays (Sovol disabled it and pushed late timers back 50 ticks, which hides late steps), and the never-incremented move queue counters are dropped. Kept: a 50 ms multi-mcu trsync timeout, a 4096-entry move queue (10 held back), and the host's shutdown code sent to the mcu for the stock screen.
+---
+ klippy/mcu.py | 3 ++-
+ src/basecmd.c | 6 +++---
+ src/sched.c   | 2 ++
+ 3 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/klippy/mcu.py b/klippy/mcu.py
+index 34551925a..47eb28162 100644
+--- a/klippy/mcu.py
++++ b/klippy/mcu.py
+@@ -281,7 +281,7 @@ class MCU_trsync:
+             s.note_homing_end()
+         return params['trigger_reason']
+ 
+-TRSYNC_TIMEOUT = 0.025
++TRSYNC_TIMEOUT = 0.05
+ TRSYNC_SINGLE_MCU_TIMEOUT = 0.250
+ 
+ class TriggerDispatch:
+@@ -902,6 +902,7 @@ class MCUConnectHelper:
+         if (self._emergency_stop_cmd is None
+             or (self._is_shutdown and not force)):
+             return
++        self._serial.send("debug_shut data=%d" % self._printer.shutCode)
+         self._emergency_stop_cmd.send()
+     def force_local_shutdown(self):
+         self._is_shutdown = True
+diff --git a/src/basecmd.c b/src/basecmd.c
+index d6d6e8465..598b5e0fc 100644
+--- a/src/basecmd.c
++++ b/src/basecmd.c
+@@ -173,7 +173,7 @@ move_finalize(void)
+         shutdown("Already finalized");
+     struct move_queue_head dummy;
+     move_queue_setup(&dummy, sizeof(*move_free_list));
+-    move_list = alloc_chunks(move_item_size, 1024, &move_count);
++    move_list = alloc_chunks(move_item_size, 4096, &move_count);
+     move_reset();
+ }
+ 
+@@ -245,7 +245,7 @@ void
+ command_get_config(uint32_t *args)
+ {
+     sendf("config is_config=%c crc=%u is_shutdown=%c move_count=%hu"
+-          , is_finalized(), config_crc, sched_is_shutdown(), move_count);
++          , is_finalized(), config_crc, sched_is_shutdown(), move_count - 10);
+ }
+ DECL_COMMAND_FLAGS(command_get_config, HF_IN_SHUTDOWN, "get_config");
+ 
+@@ -346,7 +346,7 @@ stats_update(uint32_t start, uint32_t cur)
+ void
+ command_emergency_stop(uint32_t *args)
+ {
+-    shutdown("Command request");
++    sched_shutdown(shutCode);   // Sovol: the host's reason code, for the stock screen
+ }
+ DECL_COMMAND_FLAGS(command_emergency_stop, HF_IN_SHUTDOWN, "emergency_stop");
+ 
+diff --git a/src/sched.c b/src/sched.c
+index 51d159bc6..c891fe4e1 100644
+--- a/src/sched.c
++++ b/src/sched.c
+@@ -14,6 +14,7 @@
+ #include "command.h" // shutdown
+ #include "sched.h" // sched_check_periodic
+ #include "stepper.h" // stepper_event
++#include "UC1701.h"
+ 
+ static struct timer periodic_timer, sentinel_timer, deleted_timer;
+ 
+@@ -305,6 +306,7 @@ run_shutdown(int reason)
+     extern void ctr_run_shutdownfuncs(void);
+     ctr_run_shutdownfuncs();
+     SchedStatus.shutdown_status = 1;
++    uc1701_shutdown(reason);
+     irq_enable();
+ 
+     sendf("shutdown clock=%u static_string_id=%hu", cur

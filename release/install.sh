@@ -121,13 +121,7 @@ if [ -n "$debs" ]; then   # dpkg --dry-run doesn't check dependencies; apt's sim
     fi
 fi
 
-sync_klippy() { rsync -rlptci --delete --exclude='*.pyc' --exclude=__pycache__ --exclude='*.so' --exclude=.version "$@" klipper/klippy/ "$KLIPPER/klippy/"; }
-# shortcut: Sovol disabled klippy's automatic c_helper.so rebuild, so refuse releases that change chelper C
-# until install.sh builds it; ">f" = content differs (".f" = timestamp only)
-pending=$(sync_klippy -n)
-if grep -qE '^>f.* chelper/.*\.[ch]$' <<<"$pending"; then
-    echo "this release changes klippy/chelper C code, which install.sh cannot rebuild yet"; exit 1
-fi
+sync_klippy() { rsync -rlptci --delete --exclude='*.pyc' --exclude=__pycache__ --exclude='*.so' --exclude=.version klipper/klippy/ "$KLIPPER/klippy/"; }
 
 prev=$(cat "$STATE/version" 2>/dev/null || echo unknown)
 backup=$STATE/backup/$(date +%Y%m%d-%H%M%S)-from-$prev
@@ -297,6 +291,9 @@ if [ -n "$tuned" ]; then log "Klipper settings: $tuned"; fi
 log "installing host code"
 synced=$(sync_klippy)   # captured, so a failing rsync triggers the rollback instead of reading as "no changes"
 grep -E '^(>f|\*deleting)' <<<"$synced" || echo "(no file changes)"
+if grep -qE '^(>f|\*deleting).* chelper/.*\.[ch]$' <<<"$synced"; then   # Klipper rebuilds it on start
+    rm -f "$KLIPPER/klippy/chelper/c_helper.so"; log "klippy: chelper C changed, c_helper.so rebuilds on start"
+fi
 
 services_up() {
     local s

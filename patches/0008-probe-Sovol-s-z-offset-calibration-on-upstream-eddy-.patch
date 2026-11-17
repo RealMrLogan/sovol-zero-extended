@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Logan Saunders <32494494+RealMrLogan@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 10:05:35 -0700
+Subject: [PATCH] probe: Sovol's z offset calibration on upstream eddy tap
+
+Sovol's macros and the stock screen's menu call Z_OFFSET_CALIBRATION and
+RUN_PROBE_VIR_CONTACT, which Sovol built on its own contact detection in
+the ldc1612 MCU code. Master rewrote that code (trigger_analog) and has
+its own contact probing, "tap", so both commands now use it:
+RUN_PROBE_VIR_CONTACT taps and leaves the nozzle at the contact height,
+Z_OFFSET_CALIBRATION taps at endstop_xy_position until two touches agree
+and sets the g-code Z offset so Z=0 is nozzle contact, where Sovol
+recalibrated the eddy sensor from the contact point. Sovol's options are
+still read, so existing printer.cfg files load. Tap needs tap_threshold
+(PROBE_EDDY_CURRENT_TAP_CALIBRATE) before either command works.
+
+Of the rest of Sovol's patch, only the homing tip codes (101-103) are
+kept; its eddy, ldc1612 and calibration changes are replaced by tap.
+---
+ klippy/extras/homing.py               |  6 +++
+ klippy/extras/z_offset_calibration.py | 76 +++++++++++++++++++++++++++
+ 2 files changed, 82 insertions(+)
+ create mode 100644 klippy/extras/z_offset_calibration.py
+
+diff --git a/klippy/extras/homing.py b/klippy/extras/homing.py
+index 445cccae1..039f30ef3 100644
+--- a/klippy/extras/homing.py
++++ b/klippy/extras/homing.py
+@@ -116,6 +116,8 @@ class HomingMove:
+             if trigger_time > 0.:
+                 trigger_times[name] = trigger_time
+             elif check_triggered and error is None:
++                self.printer.lookup_object('gcode').run_script_from_command(
++                    "M117 Tip code: 101 %s" % (name,))
+                 error = "No trigger on %s after full movement" % (name,)
+         # Determine stepper halt positions
+         self.toolhead.flush_step_generation()
+@@ -223,6 +225,8 @@ class Homing:
+             hmove = HomingMove(self.printer, endstops)
+             hmove.homing_move(homepos, homing_info.second_homing_speed)
+             if hmove.check_no_movement() is not None:
++                self.printer.lookup_object('gcode').run_script_from_command(
++                    "M117 Tip code: 103 %s" % (hmove.check_no_movement(),))
+                 raise self.printer.command_error(
+                     "Endstop %s still triggered after retract"
+                     % (hmove.check_no_movement(),))
+@@ -332,6 +336,8 @@ class PrinterHoming:
+                     "Probing failed due to printer shutdown")
+             raise
+         if check_movement and hmove.check_no_movement() is not None:
++            self.printer.lookup_object('gcode').run_script_from_command(
++                "M117 Tip code: 102")
+             raise self.printer.command_error(
+                 "Probe triggered prior to movement")
+         return epos
+diff --git a/klippy/extras/z_offset_calibration.py b/klippy/extras/z_offset_calibration.py
+new file mode 100644
+index 000000000..6166db99b
+--- /dev/null
++++ b/klippy/extras/z_offset_calibration.py
+@@ -0,0 +1,76 @@
++# Sovol's Z_OFFSET_CALIBRATION and RUN_PROBE_VIR_CONTACT, which Sovol's macros and the stock
++# screen's menu call, on upstream's eddy "tap" probing: the nozzle touches the bed and the
++# contact height is found from the sensor as it lifts off.
++#
++# This file may be distributed under the terms of the GNU GPLv3 license.
++
++TAP_START_Z = 5.   # tap needs the nozzle 3-20 mm above the bed when it starts
++
++class ZOffsetCalibration:
++    def __init__(self, config):
++        self.printer = config.get_printer()
++        self.xy = config.getfloatlist('endstop_xy_position', count=2)
++        self.speed = config.getfloat('speed', 180., above=0.)
++        self.z_hop_speed = config.getfloat('z_hop_speed', 5., above=0.)
++        # Sovol's options that tap has no use for, read so their config stays valid
++        config.getfloat('z_hop', 0.)
++        config.getfloat('internal_endstop_offset', 0.)
++        config.get('non_contact_probe', None)
++        probe_config = config.getsection(config.get('contact_probe'))
++        self.tap_speed = probe_config.getfloat('vir_contact_speed', 5., above=0.)
++        self.gcode = self.printer.lookup_object('gcode')
++        self.gcode.register_command('Z_OFFSET_CALIBRATION',
++                                    self.cmd_Z_OFFSET_CALIBRATION,
++                                    desc=self.cmd_Z_OFFSET_CALIBRATION_help)
++        self.gcode.register_command('RUN_PROBE_VIR_CONTACT',
++                                    self.cmd_RUN_PROBE_VIR_CONTACT,
++                                    desc=self.cmd_RUN_PROBE_VIR_CONTACT_help)
++    def _tap(self, extra=""):
++        """Tap the bed below the nozzle; returns the height of contact."""
++        toolhead = self.printer.lookup_object('toolhead')
++        toolhead.manual_move([None, None, TAP_START_Z], self.z_hop_speed)
++        try:
++            self.gcode.run_script_from_command(
++                "PROBE METHOD=tap PROBE_SPEED=%.3f %s" % (self.tap_speed, extra))
++        except self.printer.command_error:
++            self.gcode.run_script_from_command("M117 Tip code: 109")
++            raise
++        eventtime = self.printer.get_reactor().monotonic()
++        probe = self.printer.lookup_object('probe')
++        return probe.get_status(eventtime)['last_probe_position'].z
++    cmd_RUN_PROBE_VIR_CONTACT_help = "Touch the bed with the nozzle and stay there"
++    def cmd_RUN_PROBE_VIR_CONTACT(self, gcmd):
++        z = self._tap()
++        # Sovol's macros move relative to the nozzle resting on the bed
++        toolhead = self.printer.lookup_object('toolhead')
++        toolhead.manual_move([None, None, z], self.z_hop_speed)
++        gcmd.respond_info("Result is z=%.6f" % (z,))
++    cmd_Z_OFFSET_CALIBRATION_help = (
++        "Set the Z offset so Z=0 is where the nozzle touches the bed")
++    def cmd_Z_OFFSET_CALIBRATION(self, gcmd):
++        bed_temp = gcmd.get_float('BED_TEMP', 65., minval=0.)
++        extruder_temp = gcmd.get_float('EXTRUDER_TEMP', 130., minval=0.)
++        heaters = self.printer.lookup_object('heaters')
++        bed = self.printer.lookup_object('heater_bed').heater
++        extruder = self.printer.lookup_object('extruder').get_heater()
++        heaters.set_temperature(bed, bed_temp)
++        heaters.set_temperature(extruder, extruder_temp)
++        heaters.set_temperature(bed, bed_temp, wait=True)
++        heaters.set_temperature(extruder, extruder_temp, wait=True)
++        toolhead = self.printer.lookup_object('toolhead')
++        eventtime = self.printer.get_reactor().monotonic()
++        if toolhead.get_status(eventtime)['homed_axes'] != 'xyz':
++            self.gcode.run_script_from_command("G28")
++        self.gcode.run_script_from_command("SET_GCODE_OFFSET Z=0")
++        toolhead.manual_move([None, None, TAP_START_Z], self.z_hop_speed)
++        toolhead.manual_move(self.xy, self.speed)
++        # Sovol's check: retry until two touches agree within 0.0125 mm (10 at most)
++        z = self._tap("SAMPLES=2 SAMPLES_TOLERANCE=0.0125"
++                      " SAMPLES_TOLERANCE_RETRIES=8")
++        # the probe homed Z from its own reading; the nozzle touched at z
++        self.gcode.run_script_from_command("SET_GCODE_OFFSET Z=%.6f" % (z,))
++        toolhead.manual_move([None, None, TAP_START_Z], self.z_hop_speed)
++        gcmd.respond_info("Z offset: %.6f (nozzle contact)" % (z,))
++
++def load_config(config):
++    return ZOffsetCalibration(config)

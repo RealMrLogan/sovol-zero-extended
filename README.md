@@ -29,8 +29,8 @@ boards whose firmware changed, and rolls everything back if Klipper or a board d
 What it can't undo by itself is in `RECOVERY.md`.
 
 ## Layout
-- `klipper/`: upstream Klipper submodule at `faa89be8`; `patches/`: Sovol's changes split by feature, then ours
-  (0009 on). 0005 (an unused pressure probe module) was dropped.
+- `klipper/`: upstream Klipper submodule; `patches/`: Sovol's changes on it, split by feature, then ours.
+  `patches-stock/`: Sovol's series on their pin (`patches-stock/PIN`), for the byte-identical check.
 - `release/`: the installer and what it installs: `apps.conf` (app pins), `debs.conf` (system packages),
   `boards.conf` (stock or built firmware per board), `zero-config/` (the config page).
 - `tools/`: build, test, release, deploy and flash over SSH. `tests/`: run by `tools/test.sh`.
