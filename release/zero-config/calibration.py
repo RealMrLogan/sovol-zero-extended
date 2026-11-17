@@ -170,8 +170,8 @@ def run_pid(heater, target):
 JOBS = {   # name: (label, function, heater for a PID job)
     "shaper": ("Input shaping", run_shaper, None),
     "belts": ("Belt check", run_belts, None),
-    "pid-bed": ("Bed heater", None, "heater_bed"),
-    "pid-nozzle": ("Nozzle heater", None, "extruder"),
+    "pid-bed": ("Bed heater PID tuning", None, "heater_bed"),
+    "pid-nozzle": ("Nozzle heater PID tuning", None, "extruder"),
 }
 
 
@@ -225,7 +225,7 @@ def checks():
         out.append(("warn", "The resonance test is limited to %g Hz; reinstall this release to fix it."
                     % config["resonance_tester"]["max_freq"]))
     if config.get("heater_bed", {}).get("pid_kp") == SOVOL_BED_KP:
-        out.append(("warn", "The bed heater still uses Sovol's factory tuning. Run Bed heater."))
+        out.append(("warn", "The bed heater still uses Sovol's factory tuning. Run Bed heater PID tuning."))
     if not out:
         out.append(("ok", "No problems found."))
     return out

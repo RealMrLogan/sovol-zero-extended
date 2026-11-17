@@ -69,9 +69,9 @@
       <button type="button" class="btn secondary" data-job="shaper">Run</button>
       <span>Belt check <label>(about 5 min)</label></span>
       <button type="button" class="btn secondary" data-job="belts">Run</button>
-      <span>Bed heater at <input type="number" id="t-pid-bed" value="60" min="40" max="110" aria-label="Bed target °C"> °C</span>
+      <span>Bed heater PID tuning at <input type="number" id="t-pid-bed" value="60" min="40" max="110" aria-label="Bed target °C"> °C</span>
       <button type="button" class="btn secondary" data-job="pid-bed">Run</button>
-      <span>Nozzle heater at <input type="number" id="t-pid-nozzle" value="220" min="170" max="280" aria-label="Nozzle target °C"> °C
+      <span>Nozzle heater PID tuning at <input type="number" id="t-pid-nozzle" value="220" min="170" max="280" aria-label="Nozzle target °C"> °C
         <label>(part fan at 60%)</label></span>
       <button type="button" class="btn secondary" data-job="pid-nozzle">Run</button>
     </div>
@@ -215,7 +215,7 @@ function renderCalibration(d) {
     box.append(text("h3", "Belt check (" + when(r.belts.time) + ")"), text("p", r.belts.verdict), legend, beltChart(r.belts));
     out.push(box);
   }
-  for (const [key, name] of [["pid-bed", "Bed heater"], ["pid-nozzle", "Nozzle heater"]]) if (r[key]) {
+  for (const [key, name] of [["pid-bed", "Bed heater PID tuning"], ["pid-nozzle", "Nozzle heater PID tuning"]]) if (r[key]) {
     const p = r[key], box = document.createElement("div"); box.className = "result";
     box.append(text("h3", name + " (" + when(p.time) + ")"),
                text("p", `Tuned at ${p.target} °C: Kp ${p.kp}, Ki ${p.ki}, Kd ${p.kd}`));
