@@ -93,12 +93,14 @@ EOF
     (cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
 
     # Moonraker: Klipper's state and the print state come from FAKE_KLIPPER and FAKE_PRINT. FAKE_PAIRED: as
-    # with Klipper master, the host only works with its own toolhead firmware (new klippy: t, old: t0)
+    # with Klipper master, the host only works with its own toolhead firmware (new klippy: t, old: t0);
+    # FAKE_PAIRED=all: with its own firmware on both boards
     stub curl 'for a; do url=$a; done
 state=$FAKE_KLIPPER
 if [ -n "${FAKE_PAIRED:-}" ]; then
     [ "$(cat "$HOME/klipper/klippy/klippy.py")" = new ] && want=t || want=t0
     [ "$(cat "$FAKE_FW/toolhead")" = "$want" ] || state=error
+    [ "$FAKE_PAIRED" != all ] || [ "$(cat "$FAKE_FW/mainboard")" = "${want/t/m}" ] || state=error
 fi
 case $url in
     *printer/info) echo "{\"result\": {\"state\": \"$state\"}}" ;;
@@ -311,5 +313,20 @@ setup; export FAKE_FLASH_FAIL=mainboard
 unset FLASH FAKE_FLASH_FAIL FAKE_PAIRED
 has "$t/fw/toolhead" t0; has "$t/fw/mainboard" m0; same klipper/klippy/klippy.py
 has "$t/out" "toolhead restored to t0"; lacks "$t/out" "ROLLBACK FAILED"
+
+echo "== boards: a host that needs both new boards is checked once both are flashed"
+setup; export FLASH=1 FAKE_PAIRED=all
+[ "$(install ready standby)" = 0 ] || { cat "$t/out"; fail "install needing both boards failed"; }
+has "$t/fw/toolhead" t; has "$t/fw/mainboard" m
+unset FLASH FAKE_PAIRED
+
+echo "== boards: one that flashes but runs the wrong version goes back, with the others"
+setup; export FLASH=1
+sed -i 's/"version": "m"/"version": "x"/' "$REL/manifest.json"
+(cd "$REL" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS)
+[ "$(install ready standby)" = 1 ] || fail "install succeeded with a board on the wrong version"
+unset FLASH
+has "$t/fw/toolhead" t0; has "$t/fw/mainboard" m0; same klipper/klippy/klippy.py
+has "$t/out" "mainboard: new firmware did not come up"; lacks "$t/out" "ROLLBACK FAILED"
 
 echo "install-test ok"

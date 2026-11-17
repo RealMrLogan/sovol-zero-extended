@@ -308,28 +308,22 @@ if ! restart_services || { [ -z "$flash" ] && ! wait_ready; } || ! services_up; 
     log "Klipper or an app did not come back"; restore_host; exit 1
 fi
 
-# Flash one board (one retry, which also recovers a board left waiting in Katapult), then start
-# Klipper and check the board reports the expected version. Klipper is stopped again on return.
-flash_and_check() {   # board image expected-version
-    ./flash-board.sh "$1" "$2" || { log "$1: flash failed, retrying"; ./flash-board.sh "$1" "$2"; } || return 1
-    sudo -n systemctl start klipper
-    local rc=1
-    if wait_ready && [ "$(running_version "$1")" = "$3" ]; then rc=0; fi
-    sudo -n systemctl stop klipper
-    return $rc
+# One retry, which also recovers a board left waiting in Katapult
+flash_board() {   # board image
+    ./flash-board.sh "$1" "$2" || { log "$1: flash failed, retrying"; ./flash-board.sh "$1" "$2"; }
 }
 
 # Boards belong to the install: if one fails, every board flashed so far goes back to its previous image
-# (newest first), then the host. Klipper checks them only once all are back, as host and boards may only
-# work as a set.
-declare -A old_img old_ver; flashed=""
+# (newest first), then the host. Host and boards may only work as a set, so Klipper checks them only once
+# all are flashed, or all are back.
+declare -A old_img old_ver new_ver; flashed=""
 rollback_all() {
     trap - ERR
     local b
     sudo -n systemctl stop klipper
     for b in $flashed; do
         log "$b: flashing back ${old_ver[$b]}"
-        if ./flash-board.sh "$b" "${old_img[$b]}" || ./flash-board.sh "$b" "${old_img[$b]}"; then
+        if flash_board "$b" "${old_img[$b]}"; then
             cp "${old_img[$b]}" "$STATE/firmware/$b.bin"; echo "${old_ver[$b]}" > "$STATE/firmware/$b.version"
         else
             log "$b: flashing back failed"
@@ -346,10 +340,11 @@ if [ -n "$flash" ]; then
     mkdir -p "$STATE/firmware" "$backup/firmware"   # $STATE/firmware: last image flashed to each board
     trap 'sudo -n systemctl start klipper' EXIT
     trap 'log "unexpected failure, rolling back"; rollback_all' ERR
-    # toolhead first and verified before the mainboard, which is also the toolhead's only link to the host
+    sudo -n systemctl stop klipper
+    # toolhead first: the mainboard is also its only link to the host
     for b in toolhead mainboard; do
         [[ " $flash " == *" $b "* ]] || continue
-        want=$(manifest "d['boards']['$b']['version']")
+        new_ver[$b]=$(manifest "d['boards']['$b']['version']")
         # the previous image, copied: $STATE/firmware/$b.bin is overwritten once this board succeeds
         if [ -f "$STATE/firmware/$b.bin" ] && [ "$(cat "$STATE/firmware/$b.version")" = "${was[$b]}" ]; then
             cp "$STATE/firmware/$b.bin" "$backup/firmware/$b.bin"; old_ver[$b]=${was[$b]}
@@ -358,15 +353,19 @@ if [ -n "$flash" ]; then
         fi
         old_img[$b]=$backup/firmware/$b.bin
         flashed="$b $flashed"   # before flashing: a failed flash can leave the board anywhere
-        sudo -n systemctl stop klipper
-        if ! flash_and_check "$b" "firmware/$b.bin" "$want"; then
-            log "$b: new firmware did not come up"; rollback_all; exit 1
-        fi
-        cp "firmware/$b.bin" "$STATE/firmware/$b.bin"; echo "$want" > "$STATE/firmware/$b.version"
-        log "$b now runs $want"
+        if ! flash_board "$b" "firmware/$b.bin"; then log "$b: flash failed"; rollback_all; exit 1; fi
     done
     sudo -n systemctl start klipper; trap - EXIT
     if ! wait_ready; then log "Klipper did not come back after flashing"; rollback_all; exit 1; fi
+    for b in $flashed; do
+        if [ "$(running_version "$b")" != "${new_ver[$b]}" ]; then
+            log "$b: new firmware did not come up"; rollback_all; exit 1
+        fi
+    done
+    for b in $flashed; do
+        cp "firmware/$b.bin" "$STATE/firmware/$b.bin"; echo "${new_ver[$b]}" > "$STATE/firmware/$b.version"
+        log "$b now runs ${new_ver[$b]}"
+    done
 fi
 
 trap - ERR

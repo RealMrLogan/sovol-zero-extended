@@ -15,10 +15,11 @@ that can `ssh sovol@<printer>` (set `PRINTER=user@host` if it isn't `sovol@192.1
 | The release changes klippy's chelper C code | Deletes `c_helper.so` so Klipper rebuilds it on start (Sovol disabled the rebuild of a stale one) |
 | An updated app's service doesn't come back | Puts every app back on its previous commit/files and venv (and pops stashed local edits), restores `klippy/` |
 | A board flash fails or is interrupted | Retries once. The board waits in Katapult, so the retry finds it there |
-| A later board, or Klipper after flashing, fails | Every board flashed so far goes back to its previous image (newest first), then the host |
-| A board doesn't come back on the expected version | Flashes that board's previous image back (the last image install.sh flashed, or stock), then restores the previous `klippy/` |
+| A later board, or Klipper after flashing, fails | Every board flashed so far goes back to its previous image (newest first: the last image install.sh flashed, or stock), then the host |
+| A board doesn't come back on the expected version | The same: every board flashed goes back, then the host |
 
-Boards are done toolhead first, and the toolhead is verified before the mainboard is touched.
+Boards are flashed toolhead first (the mainboard is its link to the host). Klipper checks them once all are
+flashed, as host and boards may only work as a set (Klipper master can't talk to Sovol's toolhead firmware).
 Rollback was tested on 2026-11-14 with a release that claimed a wrong toolhead version.
 
 Everything install.sh does is logged to `~/zero-extended/install.log` on the printer.

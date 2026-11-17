@@ -219,7 +219,9 @@ keep their names and Sovol's config options (`vir_contact_speed` is read but unu
 expect. `Z_OFFSET_CALIBRATION` heats (bed `BED_TEMP`, nozzle 130 °C), homes, taps at
 `endstop_xy_position` until two touches agree within 0.0125 mm, and sets the g-code Z offset to the contact
 height. Sovol instead recalibrated the eddy sensor from the contact point every print. A tap that fails to
-detect contact is retried twice (a hot nozzle with filament on it blurs one; Sovol's touch retried too).
+detect contact is retried twice (a hot nozzle with filament on it blurs one; Sovol's touch retried too). It
+knows a missed tap only by upstream's error text, "Unable to detect tap": recheck it at each Klipper bump (if
+reworded, a missed tap fails at once instead of retrying).
 Before either works: `tap_threshold` in `printer.cfg`. The stock `stepper_z` already allows
 `position_min: -5`.
 
