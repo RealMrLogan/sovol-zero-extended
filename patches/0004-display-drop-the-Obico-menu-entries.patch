@@ -12,10 +12,10 @@ special-cases the "Install Obico" item.
  2 files changed, 1 insertion(+), 26 deletions(-)
 
 diff --git a/klippy/extras/display/menu.cfg b/klippy/extras/display/menu.cfg
-index 9bcf0f730..c8cbb84a6 100755
+index 638b9491c..1c40e5b59 100755
 --- a/klippy/extras/display/menu.cfg
 +++ b/klippy/extras/display/menu.cfg
-@@ -667,31 +667,6 @@ gcode:
+@@ -644,31 +644,6 @@ gcode:
      PID_CALIBRATE HEATER=heater_bed TARGET=60 WRITE_FILE=1
      SAVE_CONFIG
  
@@ -48,10 +48,10 @@ index 9bcf0f730..c8cbb84a6 100755
  type: list
  enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
 diff --git a/klippy/extras/display/menu.py b/klippy/extras/display/menu.py
-index 22f1a37d6..76ef127b2 100644
+index 447481945..11ea03d84 100644
 --- a/klippy/extras/display/menu.py
 +++ b/klippy/extras/display/menu.py
-@@ -975,7 +975,7 @@ class MenuManager:
+@@ -964,7 +964,7 @@ class MenuManager:
                      if name == "Calibrate Zoffset":
                          self.printer.send_event("klippy:start_print")
                          self.gcode.run_script("_Delay_Calibrate")

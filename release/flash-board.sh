@@ -28,8 +28,12 @@ echo "flashing $board ($(stat -c %s "$bin") bytes, reset vector 0x$rv)"
 if [ "$board" = toolhead ]; then
     # Sovol's firmware pins Klipper's CAN uuid; Katapult answers on the chip's real one (unique per board), so find it
     $FLASH -i can0 -u $uuid -r
-    sleep 1
-    katapult=$($FLASH -i can0 -q 2>&1 | sed -n 's/.*UUID: \([0-9a-f]*\), Application: Katapult.*/\1/p')
+    katapult=
+    for _ in $(seq 20); do   # Katapult takes a moment to answer after the jump (1 s wasn't always enough)
+        sleep 0.5
+        katapult=$($FLASH -i can0 -q 2>&1 | sed -n 's/.*UUID: \([0-9a-f]*\), Application: Katapult.*/\1/p')
+        [ -z "$katapult" ] || break
+    done
     [ "$(echo "$katapult" | grep -c .)" = 1 ] || { echo "expected one Katapult node on can0, found: '${katapult//$'\n'/ }'"; exit 1; }
     echo "toolhead Katapult uuid: $katapult"
     $FLASH -i can0 -u "$katapult" -f "$bin"

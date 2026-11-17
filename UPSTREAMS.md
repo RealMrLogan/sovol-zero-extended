@@ -204,26 +204,39 @@ commit message says what was kept and dropped.
 |---|---|---|
 | 0001 H750 128 KiB offset | - | dropped: upstream |
 | 0002 fixed chip ids | 0001 | clean |
-| 0003 UC1701, fonts, ws2811 | 0002 | Sovol's i2c changes dropped, not re-ported: on the F1 they made i2c errors non-fatal and reset the bus, reporting each as `ldc1612_i2c_report`; none was logged in any of the printer's klippy logs (prints, meshes, calibrations). An i2c error now shuts down, as upstream |
+| 0003 UC1701, fonts, ws2811 | 0002, 0009 | Sovol's per-error i2c recovery dropped (an i2c error now shuts down, as upstream). But the LDC1612 NACKs the first transfer after every toolhead reset, which Sovol's retries hid: 0009 recovers the bus at setup and sends the sensor one throwaway transfer (found on hardware, 2026-11-17) |
 | 0009, 0010 menu removals | 0003, 0004 | clean on 0002 |
 | 0006 shutdown / tip codes | 0005 | onto master's `idle_timeout` status and lis2dw/lis3dh id check |
 | 0007 scheduling / move queue | 0006 | **"Timer too close" shutdown restored** (Sovol pushed late timers back 50 ticks, hiding late steps); kept the 50 ms trsync timeout, 4096-entry move queue and the shutdown code for the stock screen; dropped never-incremented debug counters |
-| 0008 assorted host | 0007 | kept shell command, power-loss state, start-print events, tip codes, shaper result for the stock screen; dropped chelper no-rebuild, configfile hacks, toolhead constants, hidden files listing, `GET_GCODE_STATE`/`SOVOL_GET_STATE` (unused) |
+| 0008 assorted host | 0007 | kept shell command, start-print events, tip codes, shaper result for the stock screen; dropped chelper no-rebuild, configfile hacks, toolhead constants, hidden files listing, `GET_GCODE_STATE`/`SOVOL_GET_STATE` (unused), and **power-loss recovery** (below, Later) |
 | 0004 eddy contact homing | 0008 | rewritten: `[z_offset_calibration]` keeps Sovol's commands on upstream "tap" (below); only the homing tip codes kept |
 
 **`Z_OFFSET_CALIBRATION` and `RUN_PROBE_VIR_CONTACT` on tap** (`klippy/extras/z_offset_calibration.py`):
 Sovol's macros (`CLEAN_NOZZLE`, `START_PRINT`, `BED_MESH_CALIBRATE`) and the stock menu call them, so they
-keep their names and Sovol's config options (`vir_contact_speed` becomes the tap speed).
+keep their names and Sovol's config options (`vir_contact_speed` is read but unused: `tap_threshold` scales with probe speed, so taps run at the speed it was calibrated at).
 `RUN_PROBE_VIR_CONTACT` taps from Z 5 and leaves the nozzle at the contact height, as Sovol's macros
 expect. `Z_OFFSET_CALIBRATION` heats (bed `BED_TEMP`, nozzle 130 °C), homes, taps at
 `endstop_xy_position` until two touches agree within 0.0125 mm, and sets the g-code Z offset to the contact
-height. Sovol instead recalibrated the eddy sensor from the contact point every print.
-Before either works: `PROBE_EDDY_CURRENT_TAP_CALIBRATE` (guess, refine, verify) and `SAVE_CONFIG`, which
-writes `tap_threshold`. The stock `stepper_z` already allows `position_min: -5`.
+height. Sovol instead recalibrated the eddy sensor from the contact point every print. A tap that fails to
+detect contact is retried twice (a hot nozzle with filament on it blurs one; Sovol's touch retried too).
+Before either works: `tap_threshold` in `printer.cfg`. The stock `stepper_z` already allows
+`position_min: -5`.
 
-Verified so far: both boards build with gcc 8.3.1 (toolhead 38.9 KB of 56 KB); the printer's full config
-loads in batch mode against the new dictionaries, `c_helper.so` rebuilt by master on the printer. Not yet run
-on hardware.
+**`tap_threshold`: 12000, set by hand, not the tool's value.** `PROBE_EDDY_CURRENT_TAP_CALIBRATE` (guess,
+refine, verify) chose 7083 cold and 6858 with the bed at 65 °C, and its verify passed, but at those values
+the nozzle pressed only 0.018-0.029 mm into the bed, so taps randomly failed tap's 0.03 mm minimum. At 12000
+five taps in a row pressed 0.096 mm and agreed within 0.007 mm (the tool's upper bound was ~30900).
+Contact measured 0.66-0.76 mm above the eddy's zero, varying with temperature: what the per-print
+calibration corrects.
+
+**Hardware test, 2026-11-17** (dev builds of this branch): toolhead flashed (with Katapult as fallback);
+G28 with eddy homing; `PROBE_ACCURACY` range 0.005 mm, stddev 0.0014 mm; tap calibration; Sovol's whole
+print start (two cleaning touches at 200 °C, `Z_OFFSET_CALIBRATION`, rapid-scan mesh). Found and fixed on
+the way: the LDC1612 NACKing the first transfer after every toolhead reset (patch 0009), `max_sensor_hz`
+(the sensor reads ~6.03 MHz, Klipper's default is 5 MHz; set in `zero-extended.cfg`), master's rename of
+`gcode_move.absolute_extrude`, and power-loss recovery's per-move fsync stalling the reactor into "Timer too
+close" (removed). Python changes need a Klipper *service* restart: `RESTART`/`FIRMWARE_RESTART` keep the
+already-imported modules.
 
 **Downgrade:** an older release's install.sh refuses this one's chelper C (Sovol's tree can't rebuild
 `c_helper.so`). And once `tap_threshold` is saved, Sovol's Klipper rejects the option: remove it from
@@ -318,24 +331,24 @@ websocket-client). Held off for now (2026-11-17). Options when an upstream drops
 
 ### Feature: power-loss recovery
 
-Sovol ships one, live on the printer (`[include plr.cfg]`):
-- **Recording:** patch 0008's `cmd_G1`, for every G1 with X, Y and Z from a file being printed, rewrites
-  `~/sovol_plr_height` (`{"commandline", "Z", ...}`, with `fsync`) and, once Z > 0.2, sets
-  `was_interrupted = True` in `saved_variables.cfg` (read and rewritten with configparser per move).
-  `START_PRINT` records the file (`save_last_file`); `END_PRINT` clears it.
-- **Offering it:** patch 0003's display menu opens on `__resume` at boot when `was_interrupted` is true
-  (Resume runs `RESUME_INTERRUPTED`, Cancel clears it). KlipperScreen and Mainsail don't show it.
-- **Resuming:** `RESUME_INTERRUPTED` sets the position to 0,0,0 without homing, then `plr.sh` writes
-  `gcodes/plr/<file>`: the slicer header, `SET_KINEMATIC_POSITION Z=<last Z>`, fixed preheats
-  (M109 S160, M190 S60), a 5 mm lift and `G28 X Y`, the file's temperatures (Cura-style
-  `material_*_temperature` keys), then the rest of the file from that Z.
+**Removed at step 5** (2026-11-17). Sovol's version recorded progress in `cmd_G1`: on every G1 with X, Y and
+Z from a file (every z-hop travel), it reread `saved_variables.cfg` with configparser and rewrote and fsynced
+`~/sovol_plr_height`. On Klipper master that blocked the reactor up to 1.4 s (38 stalls in 3 minutes of a
+Benchy) and the toolhead shut down with "Timer too close" at layer 12; Sovol had disabled that check and
+enlarged Klipper's buffers. The hook, the stock menu's `__resume`, `plr.cfg`, the `START_PRINT`/`END_PRINT`/
+`CANCEL_PRINT` lines that used it, `plr.sh`, `clear_plr.sh` and `~/sovol_plr_height` are gone
+(`sovol-cleanup.sh`'s `remove_plr`, after a successful install). `saved_variables.cfg` keeps its keys, with
+`was_interrupted = False`: Sovol's menu code reads it at startup.
 
-To decide at step 5 (the code is in patches being rebased): keep and harden it, replace it, or drop it.
-What to check first: whether it works at all on a real cut (and with OrcaSlicer files, which don't write
-Cura's keys); the per-move file writes (eMMC wear, and timing on the print's critical path); resuming
-from the last *started* move, not the last finished one (the move under way when power dies is lost or
-doubled); Z not homed (relies on the motors not having moved); and offering it on KlipperScreen and
-Mainsail, not only the stock display.
+Its resume was also weak: positions set to 0,0,0 without homing Z, fixed preheats, Cura-only temperature
+keys (OrcaSlicer files resumed without them), and the move under way at the cut lost or doubled.
+
+A replacement, once everything is current, should:
+- record off the reactor (a timer or thread, a few times a minute or per layer), never per move, and not
+  fsync on the print's path;
+- record what resuming needs: file, byte position of the last *finished* move, Z, temperatures, fan, E mode;
+- resume with Z homed or probed (tap can find the print's top), and work with OrcaSlicer's files;
+- be offered in KlipperScreen and Mainsail, not only the stock display.
 
 ## Customizations that go away
 

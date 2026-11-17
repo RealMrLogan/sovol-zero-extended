@@ -4,17 +4,18 @@ Date: Tue, 17 Nov 2026 09:41:22 -0700
 Subject: [PATCH] klippy: numeric shutdown and tip codes for the stock UI
 
 On master: printing_time keeps master's idle_timeout status field; lis2dw's tip code 111 sits in master's lis2dw/lis3dh id check.
+
+Its webhooks.py change (an emergency stop clearing power-loss recovery's was_interrupted) is dropped with that feature.
 ---
  klippy/extras/fan.py          | 32 ++++++++++++++++++++++++++++++--
  klippy/extras/heater_fan.py   |  1 +
  klippy/extras/idle_timeout.py | 13 +++++++++----
  klippy/extras/lis2dw.py       |  2 ++
  klippy/klippy.py              | 12 ++++++++++++
- klippy/webhooks.py            |  8 ++++++++
  src/command.c                 |  2 ++
  src/command.h                 |  2 ++
  src/debugcmds.c               |  9 +++++++++
- 9 files changed, 75 insertions(+), 6 deletions(-)
+ 8 files changed, 67 insertions(+), 6 deletions(-)
 
 diff --git a/klippy/extras/fan.py b/klippy/extras/fan.py
 index 2bcc512d7..416bb5077 100644
@@ -183,34 +184,6 @@ index bead2046b..3ef5f01ad 100644
          self.in_shutdown_state = True
          self._set_state(msg)
          with self.reactor.assert_no_pause():
-diff --git a/klippy/webhooks.py b/klippy/webhooks.py
-index da18bff5e..4c528032d 100644
---- a/klippy/webhooks.py
-+++ b/klippy/webhooks.py
-@@ -5,6 +5,7 @@
- # This file may be distributed under the terms of the GNU GPLv3 license
- import logging, socket, os, sys, errno, collections
- import gcode
-+import configparser
- 
- try:
-     import msgspec
-@@ -378,8 +379,15 @@ class WebHooks:
-         for sa in ['log_file', 'config_file', 'software_version', 'cpu_info']:
-             response[sa] = start_args.get(sa)
-         web_request.send(response)
-+    def modify_cfg_value(self, option, new_value):
-+        _config = configparser.ConfigParser()
-+        _config.read('/home/sovol/printer_data/config/saved_variables.cfg')
-+        _config.set('Variables', option, new_value)
-+        with open('/home/sovol/printer_data/config/saved_variables.cfg', 'w') as file:
-+            _config.write(file)
- 
-     def _handle_estop_request(self, web_request):
-+        self.modify_cfg_value('was_interrupted', "False")
-         self.printer.invoke_shutdown("Shutdown due to webhooks request")
- 
-     def _handle_rpc_registration(self, web_request):
 diff --git a/src/command.c b/src/command.c
 index 05780a704..6dc268399 100644
 --- a/src/command.c

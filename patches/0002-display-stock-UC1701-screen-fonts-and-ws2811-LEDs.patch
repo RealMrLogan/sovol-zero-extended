@@ -10,10 +10,14 @@ i2c errors non-fatal and reset the bus, reporting each error to the host
 as ldc1612_i2c_report. None was logged in the printer's klippy logs
 (prints, meshes and calibrations, 2026-03 and 2026-11), and master now
 returns i2c errors as status codes; an error shuts down as upstream does.
+
+Power-loss recovery is not carried over (see "klippy: assorted Sovol host
+changes"): its __resume menu, the boot check of was_interrupted, the
+CHANG_ROOT_MAIN command and the cancel entry's clear_plr are left out.
 ---
  klippy/extras/display/display.cfg |  22 +-
- klippy/extras/display/menu.cfg    | 826 ++++++++++++++----------------
- klippy/extras/display/menu.py     |  91 +++-
+ klippy/extras/display/menu.cfg    | 805 ++++++++++++++----------------
+ klippy/extras/display/menu.py     |  76 ++-
  src/Makefile                      |   2 +-
  src/UC1701.c                      | 381 ++++++++++++++
  src/UC1701.h                      |  10 +
@@ -22,7 +26,7 @@ returns i2c errors as status codes; an error shuts down as upstream does.
  src/stm32/stm32h7.c               |  13 +-
  src/ws2811.c                      |  90 ++++
  src/ws2811.h                      |  13 +
- 11 files changed, 1043 insertions(+), 465 deletions(-)
+ 11 files changed, 1008 insertions(+), 464 deletions(-)
  mode change 100644 => 100755 klippy/extras/display/display.cfg
  mode change 100644 => 100755 klippy/extras/display/menu.cfg
  create mode 100644 src/UC1701.c
@@ -108,10 +112,10 @@ index 042c32727..e5fc5c1ed
 diff --git a/klippy/extras/display/menu.cfg b/klippy/extras/display/menu.cfg
 old mode 100644
 new mode 100755
-index b0df9fc50..926364bc5
+index b0df9fc50..9e29ccf32
 --- a/klippy/extras/display/menu.cfg
 +++ b/klippy/extras/display/menu.cfg
-@@ -1,93 +1,55 @@
+@@ -1,93 +1,35 @@
 -# This file defines the default layout of the printer's menu.
 -
 -# It is not necessary to edit this file to change the menu. Instead,
@@ -202,26 +206,6 @@ index b0df9fc50..926364bc5
 -#               + Abort
 -#           + Bed probe
 -#       + Dump parameters
-+### menu resume ###
-+[menu __resume]
-+type: list
-+name: Resume
-+
-+[menu __resume __resume]
-+type: command
-+name: Resume
-+gcode:
-+    RESUME_INTERRUPTED
-+
-+[menu __resume __cancel]
-+type: command
-+name: Cancel
-+gcode:
-+    clear_last_file
-+    SAVE_VARIABLE VARIABLE=was_interrupted VALUE=False
-+    RUN_SHELL_COMMAND CMD=clear_plr
-+    M117 Ready
-+
 +### menu reset ###
 +[menu __reset]
 +type: list
@@ -257,7 +241,7 @@ index b0df9fc50..926364bc5
  
  ### menu main ###
  [menu __main]
-@@ -97,9 +59,25 @@ name: Main
+@@ -97,9 +39,25 @@ name: Main
  ### menu tune ###
  [menu __main __tune]
  type: list
@@ -284,7 +268,7 @@ index b0df9fc50..926364bc5
  [menu __main __tune __speed]
  type: input
  name: Speed: {'%3d' % (menu.input*100)}%
-@@ -107,7 +85,6 @@ input: {printer.gcode_move.speed_factor}
+@@ -107,7 +65,6 @@ input: {printer.gcode_move.speed_factor}
  input_min: 0.01
  input_max: 5
  input_step: 0.01
@@ -292,7 +276,7 @@ index b0df9fc50..926364bc5
  gcode:
      M220 S{'%d' % (menu.input*100)}
  
-@@ -118,87 +95,144 @@ input: {printer.gcode_move.extrude_factor}
+@@ -118,87 +75,141 @@ input: {printer.gcode_move.extrude_factor}
  input_min: 0.01
  input_max: 2
  input_step: 0.01
@@ -471,13 +455,10 @@ index b0df9fc50..926364bc5
  name: Cancel printing
  gcode:
 +    M117 Cancel print!!
-+    clear_last_file
-+    SAVE_VARIABLE VARIABLE=was_interrupted VALUE=False
-+    RUN_SHELL_COMMAND CMD=clear_plr
      {% if 'pause_resume' in printer %}
          CANCEL_PRINT
      {% else %}
-@@ -212,103 +246,168 @@ gcode:
+@@ -212,103 +223,168 @@ gcode:
              G90
          {% endif %}
      {% endif %}
@@ -578,14 +559,14 @@ index b0df9fc50..926364bc5
 +type: vsdlist
 +enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
 +name: Print
-+
+ 
+-[menu __main __control __fanonoff]
 +### menu control ###
 +[menu __main __control2]
 +type: list
 +enable: {not (printer.print_stats.state == "paused" or printer.idle_timeout.state == "Printing")}
 +name: Control
- 
--[menu __main __control __fanonoff]
++
 +[menu __main __control2 __hotend0_target]
  type: input
 -enable: {'fan' in printer}
@@ -611,9 +592,13 @@ index b0df9fc50..926364bc5
 +input_max: {printer.configfile.config.heater_bed.max_temp}
 +input_step: 1
 +gcode: M140 S{'%.0f' % menu.input}
-+
+ 
+-[menu __main __control __fanspeed]
 +[menu __main __control2 __chamber_temp]
-+type: input
+ type: input
+-enable: {'fan' in printer}
+-name: Fan speed: {'%3d' % (menu.input*100)}%
+-input: {printer.fan.speed}
 +enable: {'heater_generic chamber_heater' in printer}
 +name: {"Cham:%3.0f (%4.0f)" % (menu.input, printer["heater_generic chamber_heater"].temperature)}
 +input: {printer["heater_generic chamber_heater"].target}
@@ -621,13 +606,9 @@ index b0df9fc50..926364bc5
 +input_max: 60
 +input_step: 1
 +gcode: SET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET={'%.0f' % menu.input}
- 
--[menu __main __control __fanspeed]
++
 +[menu __main __control2 __temp_fan]
- type: input
--enable: {'fan' in printer}
--name: Fan speed: {'%3d' % (menu.input*100)}%
--input: {printer.fan.speed}
++type: input
 +name: {"Tfan:%3.0f (%3.0f)" % (menu.input,printer["temperature_fan exhaust_fan"].temperature)}
 +input: {printer["temperature_fan exhaust_fan"].target}
 +input_min: 0
@@ -705,7 +686,7 @@ index b0df9fc50..926364bc5
  name: Move 10mm
  
  [menu __main __control __move_10mm __axis_x]
-@@ -339,11 +438,10 @@ gcode:
+@@ -339,11 +415,10 @@ gcode:
  
  [menu __main __control __move_10mm __axis_z]
  type: input
@@ -718,7 +699,7 @@ index b0df9fc50..926364bc5
  input_step: 10.0
  gcode:
      SAVE_GCODE_STATE NAME=__move__axis
-@@ -353,7 +451,6 @@ gcode:
+@@ -353,7 +428,6 @@ gcode:
  
  [menu __main __control __move_10mm __axis_e]
  type: input
@@ -726,7 +707,7 @@ index b0df9fc50..926364bc5
  name: Move E:{'%+06.1f' % menu.input}
  input: 0
  input_min: -{printer.configfile.config.extruder.max_extrude_only_distance|default(50)}
-@@ -368,7 +465,6 @@ gcode:
+@@ -368,7 +442,6 @@ gcode:
  ### menu move 1mm ###
  [menu __main __control __move_1mm]
  type: list
@@ -734,7 +715,7 @@ index b0df9fc50..926364bc5
  name: Move 1mm
  
  [menu __main __control __move_1mm __axis_x]
-@@ -403,7 +499,7 @@ enable: {not printer.idle_timeout.state == "Printing"}
+@@ -403,7 +476,7 @@ enable: {not printer.idle_timeout.state == "Printing"}
  name: Move Z:{'%05.1f' % menu.input}
  input: {printer.gcode_move.gcode_position.z}
  input_min: 0
@@ -743,7 +724,7 @@ index b0df9fc50..926364bc5
  input_step: 1.0
  gcode:
      SAVE_GCODE_STATE NAME=__move__axis
-@@ -463,7 +559,7 @@ enable: {not printer.idle_timeout.state == "Printing"}
+@@ -463,7 +536,7 @@ enable: {not printer.idle_timeout.state == "Printing"}
  name: Move Z:{'%05.1f' % menu.input}
  input: {printer.gcode_move.gcode_position.z}
  input_min: 0
@@ -752,7 +733,7 @@ index b0df9fc50..926364bc5
  input_step: 0.1
  gcode:
      SAVE_GCODE_STATE NAME=__move__axis
-@@ -484,299 +580,151 @@ gcode:
+@@ -484,299 +557,151 @@ gcode:
      M83
      G1 E{menu.input} F240
      RESTORE_GCODE_STATE NAME=__move__axis
@@ -895,9 +876,8 @@ index b0df9fc50..926364bc5
  [menu __main __filament __loads]
  type: command
 -name: Load Fil. slow
-+name: Load Fil
- gcode:
-     SAVE_GCODE_STATE NAME=__filament__load
+-gcode:
+-    SAVE_GCODE_STATE NAME=__filament__load
 -    M83
 -    G1 E50 F240
 -    RESTORE_GCODE_STATE NAME=__filament__load
@@ -905,8 +885,9 @@ index b0df9fc50..926364bc5
 -[menu __main __filament __unloadf]
 -type: command
 -name: Unload Fil.fast
--gcode:
--    SAVE_GCODE_STATE NAME=__filament__load
++name: Load Fil
+ gcode:
+     SAVE_GCODE_STATE NAME=__filament__load
 -    M83
 -    G1 E-50 F960
 +    LOAD_FILAMENT
@@ -915,8 +896,9 @@ index b0df9fc50..926364bc5
  [menu __main __filament __unloads]
  type: command
 -name: Unload Fil.slow
--gcode:
--    SAVE_GCODE_STATE NAME=__filament__load
++name: Unload Fil
+ gcode:
+     SAVE_GCODE_STATE NAME=__filament__load
 -    M83
 -    G1 E-50 F240
 -    RESTORE_GCODE_STATE NAME=__filament__load
@@ -926,9 +908,8 @@ index b0df9fc50..926364bc5
 -name: Feed: {'%.1f' % menu.input}
 -input: 5
 -input_step: 0.1
-+name: Unload Fil
- gcode:
-     SAVE_GCODE_STATE NAME=__filament__load
+-gcode:
+-    SAVE_GCODE_STATE NAME=__filament__load
 -    M83
 -    G1 E{'%.1f' % menu.input} F60
 +    UNLOAD_FILAMENT
@@ -1133,8 +1114,7 @@ index b0df9fc50..926364bc5
 +[menu __main __info __factory __confirm]
  type: command
 -name: Dump parameters
-+name: Confirm
- gcode:
+-gcode:
 -   {% for name1 in printer %}
 -      {% for name2 in printer[name1] %}
 -         { action_respond_info("printer['%s'].%s = %s"
@@ -1143,11 +1123,13 @@ index b0df9fc50..926364bc5
 -         { action_respond_info("printer['%s'] = %s" % (name1, printer[name1])) }
 -      {% endfor %}
 -   {% endfor %}
++name: Confirm
++gcode:
 +    SAVE_VARIABLE VARIABLE=factory_reset VALUE=False 
 +    RUN_SHELL_COMMAND CMD=FACTORY_RESETS
 +
 diff --git a/klippy/extras/display/menu.py b/klippy/extras/display/menu.py
-index e7723a7e3..22f1a37d6 100644
+index e7723a7e3..447481945 100644
 --- a/klippy/extras/display/menu.py
 +++ b/klippy/extras/display/menu.py
 @@ -7,7 +7,7 @@
@@ -1196,25 +1178,21 @@ index e7723a7e3..22f1a37d6 100644
              files = sdcard.get_file_list()
 +            files = [(r_path, size) for (r_path, size) in files if not r_path.startswith('.')]
              for fname, fsize in files:
--                self.insert_item(self.manager.menuitem_from(
+                 self.insert_item(self.manager.menuitem_from(
 -                    'command', name=repr(fname), gcode='M23 /%s' % str(fname)))
-+                self.insert_item(self.manager.menuitem_from(        #\n PRINT_START \nsave_last_file
 +                    'command', name=repr(fname), gcode='M23 /%s\nM117 %s\nM24' % (str(fname), fname))) 
  
  
  menu_items = {
-@@ -698,7 +702,17 @@ class MenuManager:
+@@ -698,7 +702,14 @@ class MenuManager:
          self.gcode_queue = []
          self.context = {}
          self.root = None
 -        self._root = config.get('menu_root', '__main')
-+        plr_bool = self.read_varibles_cfg_value('was_interrupted')
 +        reset = self.read_varibles_cfg_value('factory_reset')
 +        menu_title = ''
 +        self.config = config
-+        if plr_bool == "True":
-+            menu_title = '__resume'
-+        elif reset == "False":
++        if reset == "False":
 +           menu_title = '__reset' 
 +        else:
 +            menu_title = '__main'
@@ -1222,7 +1200,7 @@ index e7723a7e3..22f1a37d6 100644
          self.cols, self.rows = self.display.get_dimensions()
          self.timeout = config.getint('menu_timeout', 0)
          self.timer = 0
-@@ -710,6 +724,7 @@ class MenuManager:
+@@ -710,6 +721,7 @@ class MenuManager:
          # register itself for printer callbacks
          self.printer.add_object('menu', self)
          self.printer.register_event_handler("klippy:ready", self.handle_ready)
@@ -1230,29 +1208,17 @@ index e7723a7e3..22f1a37d6 100644
          # register for key events
          menu_keys.MenuKeys(config, self.key_event)
          # Load local config file in same directory as current module
-@@ -720,9 +735,20 @@ class MenuManager:
-         self.root = self.lookup_menuitem(self._root)
-         # send init event
-         self.send_event('init', self)
--
-+        self.gcode.register_command('CHANG_ROOT_MAIN', self.cmd_CHANG_ROOT_MAIN,
-+                                    desc="Chang Root Main")
-+                                    
-+    def cmd_CHANG_ROOT_MAIN(self, gcmd):
-+        self.changRootMain()
-+        
+@@ -723,6 +735,9 @@ class MenuManager:
+ 
      def handle_ready(self):
          # start timer
-+        plr_bool = self.read_varibles_cfg_value('was_interrupted')
 +        reset = self.read_varibles_cfg_value('factory_reset')
-+        if plr_bool == "True":
-+            self.gcode.run_script_from_command('M117 Power Recovery')
 +        if reset == "False":
 +            self.gcode.run_script_from_command('M117 Factory Settings')
          reactor = self.printer.get_reactor()
          reactor.register_timer(self.timer_event, reactor.NOW)
  
-@@ -937,6 +963,25 @@ class MenuManager:
+@@ -937,6 +952,25 @@ class MenuManager:
              elif isinstance(current, MenuCommand):
                  current.run_script('gcode', event=event)
                  current.run_script(event)
@@ -1278,7 +1244,7 @@ index e7723a7e3..22f1a37d6 100644
              else:
                  # current is None, no selection. passthru to container
                  container.run_script(event)
-@@ -973,7 +1018,7 @@ class MenuManager:
+@@ -973,7 +1007,7 @@ class MenuManager:
                  "previous menuitem declaration" % (name,))
          self.menuitems[name] = item
          if isinstance(item, MenuElement):
@@ -1287,7 +1253,7 @@ index e7723a7e3..22f1a37d6 100644
              if parent and not existing_item:
                  if item.index is not None:
                      self.children.setdefault(parent, []).insert(
-@@ -1018,6 +1063,25 @@ class MenuManager:
+@@ -1018,6 +1052,25 @@ class MenuManager:
              item = menu_items[type](self, cfg)
              self.add_menuitem(item.get_ns(), item)
  
@@ -1313,7 +1279,7 @@ index e7723a7e3..22f1a37d6 100644
      def _click_callback(self, eventtime, event):
          if self.is_running():
              self.press(event)
-@@ -1027,16 +1091,17 @@ class MenuManager:
+@@ -1027,16 +1080,17 @@ class MenuManager:
  
      def key_event(self, key, eventtime):
          if key == 'click':

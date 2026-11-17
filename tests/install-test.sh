@@ -25,12 +25,19 @@ setup() {
     echo old > "$H/mainsail/index.html"
     echo '{"user": "keep"}' > "$H/mainsail/config.json"
     touch "$H/printer_data/logs/klippy.log"
-    printf '[include moonraker_obico_macros.cfg]\r\n[printer]\r\nmax_accel: 40000\r\n\r\n%s\r\n#*# [input_shaper]\r\n' "$AUTOSAVE" > "$CFG/printer.cfg"
+    printf '[include moonraker_obico_macros.cfg]\r\n[include plr.cfg]\r\n[printer]\r\nmax_accel: 40000\r\n\r\n%s\r\n#*# [input_shaper]\r\n' "$AUTOSAVE" > "$CFG/printer.cfg"
     cp "$CFG/printer.cfg" "$H/patch/config/printer.cfg"
     printf '[gcode_macro KEEP]\ngcode:\n[gcode_macro _OTA]\ngcode:\n  RUN_SHELL_COMMAND CMD=ota\n[gcode_macro _OBICO_CODE_GET]\ngcode:\n[delayed_gcode code_display]\ngcode:\n    OBICO_LINK_STATUS\n' > "$CFG/get_ip.cfg"
     mkdir -p "$H/moonraker-obico" "$H/moonraker-obico-env"
     for d in "$CFG" "$H/patch/config"; do touch "$d"/{moonraker_obico_macros.cfg,moonraker-obico.cfg,moonraker-obico-update.cfg}; done
     touch "$R/etc/systemd/system/moonraker-obico.service"
+    # Sovol's power-loss recovery: plr.cfg, START_PRINT's block and PRINT_END calls in Macro.cfg, scripts, flag
+    for d in "$CFG" "$H/patch/config"; do
+        echo '[gcode_macro PRINT_END]' > "$d/plr.cfg"
+        printf '[gcode_macro START_PRINT]\r\ngcode:\r\n    {%% if printer.save_variables.variables.was_interrupted|float == True %%}\r\n        PRINT_END #Clear\r\n    {%% endif %%}\r\n    CLEAN_NOZZLE\r\n    save_last_file\r\n    M117 {last_file}\r\n[gcode_macro END_PRINT]\r\ngcode:\r\n    PRINT_END\r\n    M84\r\n' > "$d/Macro.cfg"
+    done
+    touch "$H/plr.sh" "$H/clear_plr.sh" "$H/sovol_plr_height"; mkdir -p "$H/printer_data/gcodes/plr"
+    printf '[Variables]\nfactory_reset = True\nwas_interrupted = True\n' > "$CFG/saved_variables.cfg"
     printf 'server {\n    server_name _;\n}\n' > "$R/etc/nginx/sites-available/mainsail"
     printf 'keep\n/boot/scripts/ota_service.sh &\n' > "$R/boot/scripts/btt_init.sh"
     touch "$R/etc/systemd/system/crowsnest.service"
@@ -164,6 +171,13 @@ for f in "$H/moonraker-obico" "$H/moonraker-obico-env" "$CFG/moonraker_obico_mac
          "$R/etc/systemd/system/moonraker-obico.service"; do [ ! -e "$f" ] || fail "$f left behind"; done
 has "$t/systemctl.log" "disable -q --now moonraker-obico"
 lacks "$R/boot/scripts/btt_init.sh" ota_service
+for d in "$CFG" "$H/patch/config"; do
+    [ ! -e "$d/plr.cfg" ] || fail "$d/plr.cfg left behind"; lacks "$d/printer.cfg" plr.cfg
+    [ "$(cat "$d/Macro.cfg")" = "$(printf '[gcode_macro START_PRINT]\r\ngcode:\r\n    CLEAN_NOZZLE\r\n[gcode_macro END_PRINT]\r\ngcode:\r\n    M84\r')" ] ||
+        fail "$d/Macro.cfg: $(cat -A "$d/Macro.cfg")"
+done
+for f in "$H/plr.sh" "$H/clear_plr.sh" "$H/sovol_plr_height" "$H/printer_data/gcodes/plr"; do [ ! -e "$f" ] || fail "$f left behind"; done
+has "$CFG/saved_variables.cfg" "was_interrupted = False"; has "$CFG/saved_variables.cfg" "factory_reset = True"
 has "$R/boot/scripts/btt_init.sh" keep
 has "$R/etc/nginx/sites-available/mainsail" "include $R/etc/nginx/snippets/zero-extended.conf;"
 has "$R/etc/systemd/system/zero-config.service" "$H"
@@ -245,6 +259,7 @@ same printer_data/config/printer.cfg; same patch/config/printer.cfg
 [ ! -e "$CFG/zero-extended" ] || fail "zero-extended.cfg left behind"
 [ ! -e "$H/zero-extended/version" ] || fail "version recorded for a failed install"
 [ -e "$H/moonraker-obico" ] && [ -e "$CFG/moonraker_obico_macros.cfg" ] || fail "obico removed by a failed install"
+[ -e "$CFG/plr.cfg" ] && [ -e "$H/plr.sh" ] || fail "power-loss recovery removed by a failed install"
 [ -e "$t/pip.log" ] || fail "pip never ran"
 [ ! -e "$H/moonraker-env/installed" ] || fail "moonraker-env not restored"
 [ "$(git -C "$H/moonraker" rev-parse HEAD)" = "$STOCK" ] || fail "moonraker not back at its old commit"

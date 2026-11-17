@@ -30,6 +30,11 @@ max_freq: %d
 [input_shaper]
 damping_ratio_x: 0.1
 damping_ratio_y: 0.1
+
+# The Zero's eddy sensor reads about 6.03 MHz, over Klipper's 5 MHz default, from which Klipper sets the
+# LDC1612's clock divider (Sovol's Klipper had a fixed one)
+[probe_eddy_current eddy]
+max_sensor_hz: 6500000
 """ % RESONANCE_MAX_FREQ
 
 # Klipper takes any acceleration a file asks for; these cap it. The resonance test sets its own

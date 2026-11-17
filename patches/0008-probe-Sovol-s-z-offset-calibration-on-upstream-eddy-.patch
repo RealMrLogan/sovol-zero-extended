@@ -17,9 +17,9 @@ still read, so existing printer.cfg files load. Tap needs tap_threshold
 Of the rest of Sovol's patch, only the homing tip codes (101-103) are
 kept; its eddy, ldc1612 and calibration changes are replaced by tap.
 ---
- klippy/extras/homing.py               |  6 +++
- klippy/extras/z_offset_calibration.py | 76 +++++++++++++++++++++++++++
- 2 files changed, 82 insertions(+)
+ klippy/extras/homing.py               |  6 ++
+ klippy/extras/z_offset_calibration.py | 85 +++++++++++++++++++++++++++
+ 2 files changed, 91 insertions(+)
  create mode 100644 klippy/extras/z_offset_calibration.py
 
 diff --git a/klippy/extras/homing.py b/klippy/extras/homing.py
@@ -55,10 +55,10 @@ index 445cccae1..039f30ef3 100644
          return epos
 diff --git a/klippy/extras/z_offset_calibration.py b/klippy/extras/z_offset_calibration.py
 new file mode 100644
-index 000000000..6166db99b
+index 000000000..9995c44e3
 --- /dev/null
 +++ b/klippy/extras/z_offset_calibration.py
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,85 @@
 +# Sovol's Z_OFFSET_CALIBRATION and RUN_PROBE_VIR_CONTACT, which Sovol's macros and the stock
 +# screen's menu call, on upstream's eddy "tap" probing: the nozzle touches the bed and the
 +# contact height is found from the sensor as it lifts off.
@@ -66,6 +66,7 @@ index 000000000..6166db99b
 +# This file may be distributed under the terms of the GNU GPLv3 license.
 +
 +TAP_START_Z = 5.   # tap needs the nozzle 3-20 mm above the bed when it starts
++TAP_ATTEMPTS = 3
 +
 +class ZOffsetCalibration:
 +    def __init__(self, config):
@@ -77,8 +78,10 @@ index 000000000..6166db99b
 +        config.getfloat('z_hop', 0.)
 +        config.getfloat('internal_endstop_offset', 0.)
 +        config.get('non_contact_probe', None)
-+        probe_config = config.getsection(config.get('contact_probe'))
-+        self.tap_speed = probe_config.getfloat('vir_contact_speed', 5., above=0.)
++        # Sovol's contact speed; tap uses its own (tap_threshold scales with
++        # the probe speed, so it must match what it was calibrated at)
++        config.getsection(config.get('contact_probe')).getfloat(
++            'vir_contact_speed', 5., above=0.)
 +        self.gcode = self.printer.lookup_object('gcode')
 +        self.gcode.register_command('Z_OFFSET_CALIBRATION',
 +                                    self.cmd_Z_OFFSET_CALIBRATION,
@@ -89,13 +92,19 @@ index 000000000..6166db99b
 +    def _tap(self, extra=""):
 +        """Tap the bed below the nozzle; returns the height of contact."""
 +        toolhead = self.printer.lookup_object('toolhead')
-+        toolhead.manual_move([None, None, TAP_START_Z], self.z_hop_speed)
-+        try:
-+            self.gcode.run_script_from_command(
-+                "PROBE METHOD=tap PROBE_SPEED=%.3f %s" % (self.tap_speed, extra))
-+        except self.printer.command_error:
-+            self.gcode.run_script_from_command("M117 Tip code: 109")
-+            raise
++        # a hot nozzle with filament on it can blur a tap's contact signal, and
++        # each tap squashes some away: retry those, as Sovol's touch did
++        for attempt in range(TAP_ATTEMPTS):
++            toolhead.manual_move([None, None, TAP_START_Z], self.z_hop_speed)
++            try:
++                self.gcode.run_script_from_command("PROBE METHOD=tap " + extra)
++                break
++            except self.printer.command_error as e:
++                if ("Unable to detect tap" not in str(e)
++                        or attempt == TAP_ATTEMPTS - 1):
++                    self.gcode.run_script_from_command("M117 Tip code: 109")
++                    raise
++                self.gcode.respond_info("Tap failed (%s), retrying" % (e,))
 +        eventtime = self.printer.get_reactor().monotonic()
 +        probe = self.printer.lookup_object('probe')
 +        return probe.get_status(eventtime)['last_probe_position'].z

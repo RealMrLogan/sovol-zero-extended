@@ -64,3 +64,34 @@ remove_obico() {
         log "moonraker-obico removed (takes effect at Klipper's next restart)"
     fi
 }
+
+# Sovol's power-loss recovery: its G1 hook isn't carried to Klipper master (it stalled printing, see patches/),
+# so its macros, scripts and saved file are dead. After a successful install only, like remove_obico. Its
+# saved_variables stay, was_interrupted set to False: Sovol's menu code reads it at startup and fails without it.
+remove_plr() {
+    local d vars=$HOME/printer_data/config/saved_variables.cfg
+    for d in "$(dirname "$PRINTER_CFG")" "$(dirname "$PATCH_CFG")"; do
+        [ -f "$d/plr.cfg" ] || continue
+        sed -i '/^\[include plr\.cfg\]/d' "$d/printer.cfg"
+        rm -f "$d/plr.cfg"
+        # START_PRINT's interrupted-print block and its saving of the file name, and PRINT_END (plr.cfg's)
+        if [ -f "$d/Macro.cfg" ]; then python3 - "$d/Macro.cfg" <<'PY'
+import sys
+lines = open(sys.argv[1], newline="").read().splitlines(True)   # newline="": keep its CRLFs
+out, skip = [], False
+for line in lines:
+    s = line.strip()
+    if s.startswith("{% if printer.save_variables.variables.was_interrupted"):
+        skip = True
+    if not skip and s not in ("save_last_file", "M117 {last_file}", "PRINT_END"):
+        out.append(line)
+    if skip and s == "{% endif %}":
+        skip = False
+open(sys.argv[1], "w", newline="").write("".join(out))
+PY
+        fi
+        log "power-loss recovery: macros removed from ${d#"$HOME"/}"
+    done
+    rm -rf "$HOME/plr.sh" "$HOME/clear_plr.sh" "$HOME/sovol_plr_height" "$HOME/printer_data/gcodes/plr"
+    if [ -f "$vars" ]; then sed -i 's/^was_interrupted = .*/was_interrupted = False/' "$vars"; fi
+}

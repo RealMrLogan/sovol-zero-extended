@@ -3,82 +3,18 @@ From: Logan Saunders <32494494+RealMrLogan@users.noreply.github.com>
 Date: Tue, 17 Nov 2026 09:45:07 -0700
 Subject: [PATCH] klippy: assorted Sovol host changes
 
-On master, kept: gcode_shell_command, the power-loss resume state written on each G1 from a file, klippy:start_print, M24's busy check, the end-of-file position, the tip codes and SHAPER_CALIBRATE TEST=1's saved frequencies. Dropped: the chelper no-rebuild hunk (Klipper rebuilds c_helper.so; the printer has gcc), configfile's hidden config log, fixed -backup name and firmware_restart, toolhead's timing constants (moved upstream), listing hidden files, and GET_GCODE_STATE/SOVOL_GET_STATE, which nothing calls.
+On master, kept: gcode_shell_command (get_ip.cfg's _GET_IP), klippy:start_print, M24's busy check, the end-of-file position, the tip codes and SHAPER_CALIBRATE TEST=1's saved frequencies. Dropped: the chelper no-rebuild hunk (Klipper rebuilds c_helper.so; the printer has gcc), configfile's hidden config log, fixed -backup name and firmware_restart, toolhead's timing constants (moved upstream), listing hidden files, and GET_GCODE_STATE/SOVOL_GET_STATE, which nothing calls.
+
+Power-loss recovery is not carried over: on every G1 from a file with X, Y and Z (each z-hop travel) it reread saved_variables.cfg and fsynced ~/sovol_plr_height, blocking Klipper's reactor up to 1.4 s and shutting the toolhead down with 'Timer too close' at layer 12 of a Benchy (2026-11-17; Sovol had disabled that check). To be redone off the reactor (UPSTREAMS.md, Later).
 ---
- klippy/extras/gcode_move.py          | 36 +++++++++++
  klippy/extras/gcode_shell_command.py | 94 ++++++++++++++++++++++++++++
  klippy/extras/resonance_tester.py    | 12 ++++
  klippy/extras/virtual_sdcard.py      |  5 ++
  klippy/kinematics/corexy.py          |  5 ++
  klippy/kinematics/extruder.py        |  4 ++
- 6 files changed, 156 insertions(+)
+ 5 files changed, 120 insertions(+)
  create mode 100755 klippy/extras/gcode_shell_command.py
 
-diff --git a/klippy/extras/gcode_move.py b/klippy/extras/gcode_move.py
-index 2395bd1a5..ca36f5a38 100644
---- a/klippy/extras/gcode_move.py
-+++ b/klippy/extras/gcode_move.py
-@@ -4,6 +4,9 @@
- #
- # This file may be distributed under the terms of the GNU GPLv3 license.
- import logging
-+import json
-+import configparser
-+import os
- 
- class GCodeMove:
-     def __init__(self, config):
-@@ -62,6 +65,7 @@ class GCodeMove:
-             self.move_with_transform = toolhead.move
-             self.position_with_transform = toolhead.get_position
-         self.reset_last_position()
-+        self.v_sd = self.printer.lookup_object('virtual_sdcard', None)
-     def _handle_shutdown(self):
-         self.is_printer_ready = False
-     def _handle_analyze_shutdown(self, msg, details):
-@@ -130,10 +134,42 @@ class GCodeMove:
-         self.axis_map = axis_map
-         self.base_position[4:] = [0.] * (len(extra_axes) - 4)
-         self.reset_last_position()
-+
-+    def modify_cfg_value(self, option, new_value):
-+        _config = configparser.ConfigParser()
-+        _config.read('/home/sovol/printer_data/config/saved_variables.cfg')
-+        _config.set('Variables', option, new_value)
-+        with open('/home/sovol/printer_data/config/saved_variables.cfg', 'w') as file:
-+            _config.write(file)
-+
-     # G-Code movement commands
-     def cmd_G1(self, gcmd):
-         # Move
-         params = gcmd.get_command_parameters()
-+        if 'G' in params and 'X' in params and 'Y' in params and 'Z' in params:
-+            if self.v_sd.cmd_from_sd:
-+                #commandline = gcmd.get_commandline()
-+                cfg_file_path = '/home/sovol/printer_data/config/saved_variables.cfg'
-+                _config = configparser.ConfigParser()
-+                _config.read(cfg_file_path)
-+                was_inter = _config.get('Variables', 'was_interrupted')
-+                last_file = _config.get('Variables', 'last_file')
-+                if 'Z' in params and float(params['Z']) > 0.2 and was_inter == 'False' and 'zoffset_test.gcode' not in last_file:
-+                    self.modify_cfg_value('was_interrupted', "True")
-+
-+                # if 'Z' in params:       #for test
-+                #     self.z_positon = params['Z']
-+                # if self.z_positon != "":    #for test
-+                content = {
-+                    'commandline': gcmd.get_commandline(),
-+                    'Z': params['Z'],                       #self.z_positon, 
-+                    'extrude_type': 'M82' if self.absolute_extrude else 'M83',
-+                    'e_extrude_abs': 0 #self.Coord(*self.move_position)[3]
-+                }
-+                with open("/home/sovol/sovol_plr_height", 'w') as height:
-+                    json.dump(content, height)
-+                    height.flush()
-+                    os.fsync(height.fileno())
-         try:
-             for axis, pos in self.axis_map.items():
-                 if axis in params:
 diff --git a/klippy/extras/gcode_shell_command.py b/klippy/extras/gcode_shell_command.py
 new file mode 100755
 index 000000000..3f316e695

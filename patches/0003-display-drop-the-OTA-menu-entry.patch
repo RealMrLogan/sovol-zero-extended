@@ -10,10 +10,10 @@ releases are installed from the /extended/ page instead.
  1 file changed, 10 deletions(-)
 
 diff --git a/klippy/extras/display/menu.cfg b/klippy/extras/display/menu.cfg
-index 926364bc5..9bcf0f730 100755
+index 9e29ccf32..638b9491c 100755
 --- a/klippy/extras/display/menu.cfg
 +++ b/klippy/extras/display/menu.cfg
-@@ -667,16 +667,6 @@ gcode:
+@@ -644,16 +644,6 @@ gcode:
      PID_CALIBRATE HEATER=heater_bed TARGET=60 WRITE_FILE=1
      SAVE_CONFIG
  

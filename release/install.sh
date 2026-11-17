@@ -374,4 +374,5 @@ echo "$version" > "$STATE/version"
 cp manifest.json "$STATE/manifest.json"
 
 remove_obico   # sovol-cleanup.sh: only now, see there
+remove_plr     # sovol-cleanup.sh: likewise
 log "installed sovol-zero-extended $version"
